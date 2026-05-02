@@ -907,6 +907,25 @@ const KNOWN_MINTS = {
   "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So":{symbol:"mSOL",name:"Marinade SOL",price:168.2},
 };
 
+async function fetchJupiterPricesByMint(mints){
+  const uniq = Array.from(new Set((mints||[]).filter(Boolean)));
+  if(uniq.length===0) return {};
+  try{
+    const r=await fetch(`https://price.jup.ag/v6/price?ids=${uniq.join(",")}`);
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    const j=await r.json();
+    const out={};
+    uniq.forEach(m=>{
+      const p=j?.data?.[m]?.price;
+      if(typeof p==="number"&&isFinite(p)&&p>0) out[m]=p;
+    });
+    return out;
+  }catch(e){
+    console.warn("Jupiter price fetch failed:",e.message);
+    return {};
+  }
+}
+
 // ── Wallet Tokens Panel Component ──
 function WalletTokensPanel({walletPubkey,solBalance,splTokens,loading,error,onRefresh,solPrice}){
   const SOL_PRICE=solPrice||148.5;
@@ -1077,20 +1096,25 @@ function App() {
         {programId:TOKEN_PROGRAM},
         {encoding:"jsonParsed",commitment:"confirmed"}
       ]);
-      const toks=(tokRes.value||[]).map(a=>{
+      const raw=(tokRes.value||[]).map(a=>{
         const info=a.account.data.parsed.info;
         const mint=info.mint;
-        const uiAmount=info.tokenAmount.uiAmount||0;
+        const uiAmount=parseFloat(info.tokenAmount.uiAmountString||"0");
         const meta=KNOWN_MINTS[mint]||{};
+        const fallbackSym=("TKN-"+mint.slice(0,4)).toUpperCase();
         return{
           mint,
           uiAmount,
           balance:uiAmount,
-          symbol:meta.symbol,
-          name:meta.name,
+          symbol:meta.symbol||fallbackSym,
+          name:meta.name||("Token "+mint.slice(0,6)+"…"),
           price:meta.price
         };
-      }).filter(t=>t.uiAmount>0).sort((a,b)=>(b.uiAmount*(b.price||0))-(a.uiAmount*(a.price||0)));
+      }).filter(t=>t.uiAmount>0);
+      const mintPrices=await fetchJupiterPricesByMint(raw.map(t=>t.mint));
+      const toks=raw
+        .map(t=>({...t,price:mintPrices[t.mint]||t.price||0}))
+        .sort((a,b)=>(b.uiAmount*(b.price||0))-(a.uiAmount*(a.price||0)));
       setSplTokens(toks);
     }catch(e){ setWalletError(e.message||"RPC error"); }
     setWalletLoading(false);
