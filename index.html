@@ -906,7 +906,6 @@ const KNOWN_MINTS = {
   "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm":{symbol:"WIF",name:"dogwifhat",price:1.82},
   "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE":{symbol:"ORCA",name:"Orca",price:1.07},
   "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So":{symbol:"mSOL",name:"Marinade SOL",price:168.2},
-  "METvsvVRapdj9cFLzq4Tr43xK4tAjQfwX76z3n6mWQL":{symbol:"MET",name:"MET Token",price:0},
 };
 
 async function fetchJupiterPricesByMint(mints){
@@ -935,9 +934,6 @@ function readUiTokenAmount(tokenAmount){
   const dec = Number(tokenAmount.decimals||0);
   if(!isFinite(amt)||!isFinite(dec)) return 0;
   return amt/Math.pow(10,dec);
-}
-function tokenKey(t){
-  return t&&t.mint?`mint:${t.mint}`:(t?.symbol||"");
 }
 
 // ── Wallet Tokens Panel Component ──
@@ -1079,18 +1075,17 @@ function App() {
     (t.name||"").toLowerCase().includes(tokenQ.toLowerCase())
   );
 
-  // Find selected token — prefer mint-accurate selection for wallet tokens.
-  const isMintSelection = typeof token==="string"&&token.startsWith("mint:");
-  const tok = (walletTokenList&&walletTokenList.find(t=>isMintSelection?tokenKey(t)===token:((t.symbol||"").toUpperCase()===token.toUpperCase())))
-    || (!isMintSelection&&findTokenMeta(token))
+  // Find selected token — check wallet list first, then static
+  const tok = (walletTokenList&&walletTokenList.find(t=>(t.symbol||"").toUpperCase()===token.toUpperCase()))
+    || findTokenMeta(token)
     || TOKENS[1];
 
   const curr=CURRENCIES.find(c=>c.code===currency)||CURRENCIES[0];
   // Override with live rates
   const currRate = getLiveCurrRate(currency);
-  const tokPrice = tok.price||getLiveTokPrice(tok.symbol)||0;
+  const tokPrice = tok.price||getLiveTokPrice(tok.symbol)||1;
   const num=parseFloat(amount)||0;
-  const tokAmt=inputMode==="fiat"?(tokPrice>0?((num/currRate)/tokPrice):0):num;
+  const tokAmt=inputMode==="fiat"?(num/currRate)/tokPrice:num;
   const fiatAmt=inputMode==="crypto"?num*tokPrice*currRate:num;
   const dispTok=fmtTok(tokAmt);
   // Patch curr and tok with live values for child components
@@ -1169,16 +1164,7 @@ function App() {
 
   function disconnectWallet(){
     setConnected(false);setWalletPubkey(null);setSolBalance(null);setSplTokens([]);setWalletError(null);
-    setToken("USDC");
     try{const p=window.solana||window.solflare;if(p)p.disconnect();}catch(e){}
-  }
-
-  function handleSendClick(){
-    if(!connected){ alert("Connect wallet to send."); return; }
-    if(!recipient){ alert("Enter recipient .sol domain or wallet."); return; }
-    if(!(num>0)){ alert("Enter a valid amount."); return; }
-    if(!(tokPrice>0)){ alert(`Live price unavailable for ${tok.symbol}. Please refresh and try again.`); return; }
-    alert(`Send flow ready for ${dispTok} ${tok.symbol} to ${recipient}.`);
   }
 
   return (
@@ -1280,7 +1266,7 @@ function App() {
                       />
                     </div>
 
-                    <button className="send-btn" onClick={handleSendClick} disabled={!connected||!recipient||!num||!(tokPrice>0)}>
+                    <button className="send-btn" disabled={!connected||!recipient||!num}>
                       {!connected?"Connect wallet to send":!recipient?"Enter a .sol recipient":`Send ${dispTok} ${tokLive.symbol}`}
                     </button>
                   </>
@@ -1346,7 +1332,7 @@ function App() {
               <div style={{textAlign:"center",padding:"1.5rem",color:"var(--text3)",fontSize:13}}>No tokens found</div>
             )}
             {filteredTokens.map(t=>(
-              <div key={t.mint||t.symbol} className="modal-item" onClick={()=>{setToken(tokenKey(t));setShowModal(false);setTokenQ("");}}>
+              <div key={t.mint||t.symbol} className="modal-item" onClick={()=>{setToken(t.symbol);setShowModal(false);setTokenQ("");}}>
                 <div className="tok-icon" style={{background:t.bg||"rgba(255,255,255,0.08)",color:t.color||"#ccc",width:36,height:36,fontSize:10}}>{(t.symbol||"").slice(0,4)}</div>
                 <div>
                   <div className="m-name">{t.symbol}</div>
