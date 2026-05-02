@@ -927,6 +927,15 @@ async function fetchJupiterPricesByMint(mints){
   }
 }
 
+function readUiTokenAmount(tokenAmount){
+  if(!tokenAmount) return 0;
+  if(typeof tokenAmount.uiAmount==="number"&&isFinite(tokenAmount.uiAmount)) return tokenAmount.uiAmount;
+  const amt = Number(tokenAmount.amount||0);
+  const dec = Number(tokenAmount.decimals||0);
+  if(!isFinite(amt)||!isFinite(dec)) return 0;
+  return amt/Math.pow(10,dec);
+}
+
 // ── Wallet Tokens Panel Component ──
 function WalletTokensPanel({walletPubkey,solBalance,splTokens,loading,error,onRefresh,solPrice}){
   const SOL_PRICE=solPrice||148.5;
@@ -1056,7 +1065,7 @@ function App() {
     if(connected){
       return (walletTokenList||[]).filter(t=>t.symbol==="SOL"||t.balance==null||t.balance>0).map(t=>{
         const meta=findTokenMeta(t.symbol)||{};
-        return {...meta,...t,price:getLiveTokPrice(t.symbol)||t.price||meta.price||0};
+        return {...meta,...t,price:t.price||getLiveTokPrice(t.symbol)||meta.price||0};
       });
     }
     return TOKENS.map(t=>({...t,price:getLiveTokPrice(t.symbol)||t.price||0}));
@@ -1074,7 +1083,7 @@ function App() {
   const curr=CURRENCIES.find(c=>c.code===currency)||CURRENCIES[0];
   // Override with live rates
   const currRate = getLiveCurrRate(currency);
-  const tokPrice = getLiveTokPrice(tok.symbol)||tok.price||1;
+  const tokPrice = tok.price||getLiveTokPrice(tok.symbol)||1;
   const num=parseFloat(amount)||0;
   const tokAmt=inputMode==="fiat"?(num/currRate)/tokPrice:num;
   const fiatAmt=inputMode==="crypto"?num*tokPrice*currRate:num;
@@ -1113,7 +1122,7 @@ function App() {
         const info=a?.account?.data?.parsed?.info;
         if(!info||!info.mint||!info.tokenAmount) return;
         const mint=info.mint;
-        const uiAmount=parseFloat(info.tokenAmount.uiAmountString||"0");
+        const uiAmount=readUiTokenAmount(info.tokenAmount);
         if(!(uiAmount>0)) return;
         const meta=KNOWN_MINTS[mint]||{};
         const fallbackSym=("TKN-"+mint.slice(0,4)).toUpperCase();
@@ -1138,7 +1147,6 @@ function App() {
       setSplTokens(toks);
     }catch(e){
       setWalletError(e.message||"RPC error");
-      if(solBalance===null) setSolBalance(0);
     }
     setWalletLoading(false);
   }
