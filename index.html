@@ -1205,13 +1205,6 @@ function App() {
                 </div>
                 <p className="card-sub">{bulkMode?"Send to up to 1,000 wallets or .sol domains at once.":"Send tokens easily using .sol domains."}</p>
 
-                {/* SNS banner */}
-                <div className="sns-banner">
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="#a3e635" strokeWidth="1.3"/><circle cx="8" cy="5.5" r="0.7" fill="#a3e635"/><path d="M8 8v3.5" stroke="#a3e635" strokeWidth="1.3" strokeLinecap="round"/></svg>
-                  {bulkMode?"Ensure recipients have .sol domains —":"No .sol domain yet?"}&nbsp;
-                  <a href={SNS_LINK} target="_blank" rel="noopener noreferrer">{bulkMode?"Register on SNS →":"Register yours on SNS →"}</a>
-                </div>
-
                 {/* Send To (single mode only) */}
                 {!bulkMode&&(
                   <div className="field">
@@ -1292,14 +1285,6 @@ function App() {
           <div className="info-card">
             <h3>Bulk Send</h3>
             <p>Toggle Bulk Send to pay up to 1,000 wallets in one go. Upload CSV or XLSX, set amounts in fiat or crypto, and fire one transaction.</p>
-          </div>
-          <div className="info-card">
-            <h3>No .sol domain yet?</h3>
-            <p>Register yours on SNS and use it across all Solana apps as your Web3 identity.</p>
-            <a href={SNS_LINK} target="_blank" rel="noopener noreferrer"
-              style={{display:"inline-block",marginTop:10,color:"#a3e635",fontSize:13,fontWeight:600,textDecoration:"none"}}>
-              Register on SNS →
-            </a>
           </div>
         </div>
       </div>
