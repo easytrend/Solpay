@@ -1096,10 +1096,16 @@ function App() {
 
   async function fetchBalances(pubkey){
     setWalletLoading(true);setWalletError(null);
+    const errs = [];
     try{
-      // SOL balance
-      const balRes=await rpcFetch("getBalance",[pubkey,{commitment:"confirmed"}]);
-      setSolBalance(balRes.value/1e9);
+      // SOL balance should not block token list
+      try{
+        const balRes=await rpcFetch("getBalance",[pubkey,{commitment:"confirmed"}]);
+        setSolBalance(balRes.value/1e9);
+      }catch(e){
+        errs.push("SOL balance unavailable");
+      }
+
       // SPL token accounts (legacy + token-2022)
       const tokenQueries = await Promise.allSettled([
         rpcFetch("getTokenAccountsByOwner",[
@@ -1116,6 +1122,7 @@ function App() {
       const tokenAccounts = tokenQueries
         .filter(x=>x.status==="fulfilled")
         .flatMap(x=>(x.value&&x.value.value)||[]);
+      if(tokenAccounts.length===0) errs.push("Token accounts unavailable");
 
       const byMint = {};
       tokenAccounts.forEach(a=>{
@@ -1146,8 +1153,9 @@ function App() {
         .sort((a,b)=>(b.uiAmount*(b.price||0))-(a.uiAmount*(a.price||0)));
       setSplTokens(toks);
     }catch(e){
-      setWalletError(e.message||"RPC error");
+      errs.push(e.message||"RPC error");
     }
+    if(errs.length>0) setWalletError(errs.join(" · "));
     setWalletLoading(false);
   }
 
@@ -1157,8 +1165,9 @@ function App() {
     try{
       const resp=await provider.connect();
       const pk=resp.publicKey.toString();
-      setWalletPubkey(pk);setConnected(true);
-      fetchBalances(pk);
+      setWalletPubkey(pk);
+      await fetchBalances(pk);
+      setConnected(true);
     }catch(e){console.error("Wallet connect error:",e);}
   }
 
