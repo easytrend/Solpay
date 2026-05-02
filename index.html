@@ -936,6 +936,51 @@ function readUiTokenAmount(tokenAmount){
   return amt/Math.pow(10,dec);
 }
 
+async function fetchHeliusAssetsFallback(owner){
+  try{
+    const r = await fetch("https://mainnet.helius-rpc.com/?api-key=15319bf8-35b6-4a2c-aa8b-09c1e7f6b5a0",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        jsonrpc:"2.0",
+        id:"solpay-helius-assets",
+        method:"getAssetsByOwner",
+        params:{
+          ownerAddress:owner,
+          page:1,
+          limit:1000,
+          displayOptions:{showFungible:true,showNativeBalance:false}
+        }
+      })
+    });
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    const j = await r.json();
+    const items = j?.result?.items||[];
+    const out = [];
+    items.forEach(it=>{
+      const mint = it?.id;
+      const amountRaw = Number(it?.token_info?.balance||0);
+      const decimals = Number(it?.token_info?.decimals||0);
+      const amount = decimals>=0 ? amountRaw/Math.pow(10,decimals) : 0;
+      if(!mint || !(amount>0)) return;
+      const known = KNOWN_MINTS[mint]||{};
+      const md = it?.content?.metadata||{};
+      out.push({
+        mint,
+        uiAmount:amount,
+        balance:amount,
+        symbol:known.symbol||md.symbol||("TKN-"+mint.slice(0,4)).toUpperCase(),
+        name:known.name||md.name||("Token "+mint.slice(0,6)+"…"),
+        price:known.price||0
+      });
+    });
+    return out;
+  }catch(e){
+    console.warn("Helius assets fallback failed:",e.message);
+    return [];
+  }
+}
+
 // ── Wallet Tokens Panel Component ──
 function WalletTokensPanel({walletPubkey,solBalance,splTokens,loading,error,onRefresh,solPrice}){
   const SOL_PRICE=solPrice||148.5;
@@ -1147,8 +1192,11 @@ function App() {
         byMint[mint].balance = byMint[mint].uiAmount;
       });
       const raw=Object.values(byMint);
-      const mintPrices=await fetchJupiterPricesByMint(raw.map(t=>t.mint));
-      const toks=raw
+      const fallbackRaw = raw.length===0 ? await fetchHeliusAssetsFallback(pubkey) : [];
+      const mergedRaw = raw.length>0 ? raw : fallbackRaw;
+      if(mergedRaw.length===0) errs.push("No token balances returned for this wallet");
+      const mintPrices=await fetchJupiterPricesByMint(mergedRaw.map(t=>t.mint));
+      const toks=mergedRaw
         .map(t=>({...t,price:mintPrices[t.mint]||t.price||0}))
         .sort((a,b)=>(b.uiAmount*(b.price||0))-(a.uiAmount*(a.price||0)));
       setSplTokens(toks);
