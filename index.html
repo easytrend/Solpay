@@ -895,6 +895,7 @@ async function rpcFetch(method, params){
   throw new Error("All RPC nodes failed:\n"+errors.join("\n"));
 }
 const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 const KNOWN_MINTS = {
   "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v":{symbol:"USDC",name:"USD Coin",price:1.0},
   "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB":{symbol:"USDT",name:"Tether",price:1.0},
@@ -1053,7 +1054,7 @@ function App() {
   // Connected wallets should only pick from held tokens; otherwise show the static catalog.
   const selectableTokens = React.useMemo(()=>{
     if(connected){
-      return (walletTokenList||[]).filter(t=>t.balance==null||t.balance>0).map(t=>{
+      return (walletTokenList||[]).filter(t=>t.symbol==="SOL"||t.balance==null||t.balance>0).map(t=>{
         const meta=findTokenMeta(t.symbol)||{};
         return {...meta,...t,price:getLiveTokPrice(t.symbol)||t.price||meta.price||0};
       });
@@ -1090,33 +1091,55 @@ function App() {
       // SOL balance
       const balRes=await rpcFetch("getBalance",[pubkey,{commitment:"confirmed"}]);
       setSolBalance(balRes.value/1e9);
-      // SPL token accounts
-      const tokRes=await rpcFetch("getTokenAccountsByOwner",[
-        pubkey,
-        {programId:TOKEN_PROGRAM},
-        {encoding:"jsonParsed",commitment:"confirmed"}
+      // SPL token accounts (legacy + token-2022)
+      const tokenQueries = await Promise.allSettled([
+        rpcFetch("getTokenAccountsByOwner",[
+          pubkey,
+          {programId:TOKEN_PROGRAM},
+          {encoding:"jsonParsed",commitment:"confirmed"}
+        ]),
+        rpcFetch("getTokenAccountsByOwner",[
+          pubkey,
+          {programId:TOKEN_2022_PROGRAM},
+          {encoding:"jsonParsed",commitment:"confirmed"}
+        ])
       ]);
-      const raw=(tokRes.value||[]).map(a=>{
-        const info=a.account.data.parsed.info;
+      const tokenAccounts = tokenQueries
+        .filter(x=>x.status==="fulfilled")
+        .flatMap(x=>(x.value&&x.value.value)||[]);
+
+      const byMint = {};
+      tokenAccounts.forEach(a=>{
+        const info=a?.account?.data?.parsed?.info;
+        if(!info||!info.mint||!info.tokenAmount) return;
         const mint=info.mint;
         const uiAmount=parseFloat(info.tokenAmount.uiAmountString||"0");
+        if(!(uiAmount>0)) return;
         const meta=KNOWN_MINTS[mint]||{};
         const fallbackSym=("TKN-"+mint.slice(0,4)).toUpperCase();
-        return{
-          mint,
-          uiAmount,
-          balance:uiAmount,
-          symbol:meta.symbol||fallbackSym,
-          name:meta.name||("Token "+mint.slice(0,6)+"…"),
-          price:meta.price
-        };
-      }).filter(t=>t.uiAmount>0);
+        if(!byMint[mint]){
+          byMint[mint]={
+            mint,
+            uiAmount:0,
+            balance:0,
+            symbol:meta.symbol||fallbackSym,
+            name:meta.name||("Token "+mint.slice(0,6)+"…"),
+            price:meta.price
+          };
+        }
+        byMint[mint].uiAmount += uiAmount;
+        byMint[mint].balance = byMint[mint].uiAmount;
+      });
+      const raw=Object.values(byMint);
       const mintPrices=await fetchJupiterPricesByMint(raw.map(t=>t.mint));
       const toks=raw
         .map(t=>({...t,price:mintPrices[t.mint]||t.price||0}))
         .sort((a,b)=>(b.uiAmount*(b.price||0))-(a.uiAmount*(a.price||0)));
       setSplTokens(toks);
-    }catch(e){ setWalletError(e.message||"RPC error"); }
+    }catch(e){
+      setWalletError(e.message||"RPC error");
+      if(solBalance===null) setSolBalance(0);
+    }
     setWalletLoading(false);
   }
 
@@ -1301,7 +1324,7 @@ function App() {
               <div style={{textAlign:"center",padding:"1.5rem",color:"var(--text3)",fontSize:13}}>No tokens found</div>
             )}
             {filteredTokens.map(t=>(
-              <div key={t.symbol} className="modal-item" onClick={()=>{setToken(t.symbol);setShowModal(false);setTokenQ("");}}>
+              <div key={t.mint||t.symbol} className="modal-item" onClick={()=>{setToken(t.symbol);setShowModal(false);setTokenQ("");}}>
                 <div className="tok-icon" style={{background:t.bg||"rgba(255,255,255,0.08)",color:t.color||"#ccc",width:36,height:36,fontSize:10}}>{(t.symbol||"").slice(0,4)}</div>
                 <div>
                   <div className="m-name">{t.symbol}</div>
