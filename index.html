@@ -1010,6 +1010,11 @@ function App() {
     return liveRates.crypto[symbol]||staticT?.price||0;
   }
 
+  function findTokenMeta(symbol){
+    if(!symbol) return null;
+    return TOKENS.find(t=>(t.symbol||"").toUpperCase()===String(symbol).toUpperCase())||null;
+  }
+
   // Build token list as soon as wallet is connected — don't wait for RPC balance
   const liveSolPrice = liveRates.crypto["SOL"]||148.5;
   const walletTokenList = React.useMemo(()=>{
@@ -1019,29 +1024,31 @@ function App() {
       balance:solBalance // may be null while loading — handled in modal
     };
     const splEntries=splTokens.map(t=>{
-      const meta=TOKENS.find(x=>x.symbol===t.symbol)||{color:"#aaa",bg:"rgba(255,255,255,0.08)"};
+      const meta=findTokenMeta(t.symbol)||{color:"#aaa",bg:"rgba(255,255,255,0.08)"};
       const livePrice=liveRates.crypto[t.symbol]||t.price||meta.price||0;
       return{...meta,...t,price:livePrice};
     });
     return[solEntry,...splEntries];
   },[connected,solBalance,splTokens,liveRates]);
 
-  // Always show full TOKENS list; merge in wallet balances when available
+  // Connected wallets should only pick from held tokens; otherwise show the static catalog.
   const selectableTokens = React.useMemo(()=>{
-    return TOKENS.map(t=>{
-      const wt = walletTokenList && walletTokenList.find(w=>w.symbol===t.symbol);
-      const livePrice = getLiveTokPrice(t.symbol)||t.price||0;
-      return wt ? {...t, price:livePrice, balance:wt.balance} : {...t, price:livePrice};
-    });
-  },[walletTokenList, liveRates]);
+    if(connected){
+      return (walletTokenList||[]).filter(t=>t.balance==null||t.balance>0).map(t=>{
+        const meta=findTokenMeta(t.symbol)||{};
+        return {...meta,...t,price:getLiveTokPrice(t.symbol)||t.price||meta.price||0};
+      });
+    }
+    return TOKENS.map(t=>({...t,price:getLiveTokPrice(t.symbol)||t.price||0}));
+  },[connected, walletTokenList, liveRates]);
   const filteredTokens = selectableTokens.filter(t=>
     (t.symbol||"").toLowerCase().includes(tokenQ.toLowerCase()) ||
     (t.name||"").toLowerCase().includes(tokenQ.toLowerCase())
   );
 
   // Find selected token — check wallet list first, then static
-  const tok = (walletTokenList&&walletTokenList.find(t=>t.symbol===token))
-    || TOKENS.find(t=>t.symbol===token)
+  const tok = (walletTokenList&&walletTokenList.find(t=>(t.symbol||"").toUpperCase()===token.toUpperCase()))
+    || findTokenMeta(token)
     || TOKENS[1];
 
   const curr=CURRENCIES.find(c=>c.code===currency)||CURRENCIES[0];
@@ -1075,7 +1082,14 @@ function App() {
         const mint=info.mint;
         const uiAmount=info.tokenAmount.uiAmount||0;
         const meta=KNOWN_MINTS[mint]||{};
-        return{mint,uiAmount,symbol:meta.symbol,name:meta.name,price:meta.price};
+        return{
+          mint,
+          uiAmount,
+          balance:uiAmount,
+          symbol:meta.symbol,
+          name:meta.name,
+          price:meta.price
+        };
       }).filter(t=>t.uiAmount>0).sort((a,b)=>(b.uiAmount*(b.price||0))-(a.uiAmount*(a.price||0)));
       setSplTokens(toks);
     }catch(e){ setWalletError(e.message||"RPC error"); }
@@ -1250,7 +1264,7 @@ function App() {
             </div>
             {connected&&solBalance!==null&&(
               <div style={{fontSize:11,color:"var(--lime)",marginBottom:8,padding:"0 2px",fontWeight:600}}>
-                ✓ Wallet balances loaded
+                ✓ Showing tokens available in your connected wallet
               </div>
             )}
             {connected&&walletLoading&&(
