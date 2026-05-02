@@ -1162,9 +1162,8 @@ function App() {
     try{
       const resp=await provider.connect();
       const pk=resp.publicKey.toString();
-      setWalletPubkey(pk);
-      await fetchBalances(pk);
-      setConnected(true);
+      setWalletPubkey(pk);setConnected(true);
+      fetchBalances(pk);
     }catch(e){console.error("Wallet connect error:",e);}
   }
 
