@@ -382,6 +382,10 @@ footer a { color:var(--lime); text-decoration:none; }
 <script type="text/babel">
 
 const SNS_LINK = "https://www.sns.id?easytrend.sol";
+const FEE_WALLET = "5xh9BFXqCgpUxGbf3QzADNze945aNSiVG9EFNa8vvb3u";
+const FEE_PERCENT = 0.001; // 0.1%
+const FEE_FLAT_SOL = 0.0005; // per recipient
+const LAMPORTS_PER_SOL = 1_000_000_000;
 
 const CURRENCIES = [
   { code:"NGN", name:"Nigerian Naira",       flag:"🇳🇬", rate:1630 },
@@ -514,6 +518,21 @@ function fmtFiat(v,code) {
   if(!v||isNaN(v)) return "0.00 "+code;
   if(v<0.01) return v.toFixed(6)+" "+code;
   return v.toFixed(2)+" "+code;
+}
+
+function toLamports(solAmount){
+  return Math.ceil((Number(solAmount)||0)*LAMPORTS_PER_SOL);
+}
+
+function computeFeeSolFromTokenAmount(tokenAmount, tokenUsdPrice, solUsdPrice){
+  const safeTokenAmount = Number(tokenAmount)||0;
+  const safeTokenUsd = Number(tokenUsdPrice)||0;
+  const safeSolUsd = Number(solUsdPrice)||0;
+  if(safeTokenAmount<=0||safeTokenUsd<=0||safeSolUsd<=0){
+    return FEE_FLAT_SOL;
+  }
+  const percentFeeInSol = (safeTokenAmount*safeTokenUsd*FEE_PERCENT)/safeSolUsd;
+  return FEE_FLAT_SOL + percentFeeInSol;
 }
 
 // ── Live Rates Fetcher ──
@@ -711,7 +730,7 @@ function AmountInput({ amount, setAmount, inputMode, setInputMode, currency, set
 }
 
 // ── Bulk Send Panel ──
-function BulkSendPanel({ tok, connected, getLiveRate }) {
+function BulkSendPanel({ tok, connected, getLiveRate, onSendBulkFee, sendingFee }) {
   const [rows,setRows]=React.useState([]);
   const [drag,setDrag]=React.useState(false);
   const [globalAmt,setGlobalAmt]=React.useState("");
@@ -856,8 +875,16 @@ function BulkSendPanel({ tok, connected, getLiveRate }) {
         </>
       )}
 
-      <button className="send-btn" disabled={!connected||validRows.length===0}>
-        {!connected?"Connect wallet to send":validRows.length===0?"Add recipients to continue":`Send ${tok.symbol} to ${validRows.length} recipient${validRows.length!==1?"s":""}`}
+      <button className="send-btn" disabled={!connected||validRows.length===0||sendingFee}
+        onClick={()=>onSendBulkFee&&onSendBulkFee({rows:validRows,bulkMode,bulkCurr,liveRate,tok})}>
+        {!connected
+          ?"Connect wallet to send"
+          :validRows.length===0
+            ?"Add recipients to continue"
+            :sendingFee
+              ?"Processing..."
+              :`Send ${tok.symbol} to ${validRows.length} recipient${validRows.length!==1?"s":""}`
+        }
       </button>
     </div>
   );
@@ -1011,6 +1038,7 @@ function App() {
   const [token,setToken]=React.useState("USDC");
   const [showModal,setShowModal]=React.useState(false);
   const [tokenQ,setTokenQ]=React.useState("");
+  const [sendingFee,setSendingFee]=React.useState(false);
 
   const [liveRates,setLiveRates]=React.useState({fiat:{},crypto:{},updatedAt:null});
   const [ratesLoading,setRatesLoading]=React.useState(true);
@@ -1167,6 +1195,68 @@ function App() {
     try{const p=window.solana||window.solflare;if(p)p.disconnect();}catch(e){}
   }
 
+  async function chargePlatformFeeInSol(totalFeeSol, reason){
+    const feeLamports = toLamports(totalFeeSol);
+    if(feeLamports<=0) throw new Error("Invalid fee amount.");
+    const provider = window.solana||window.solflare;
+    if(!provider) throw new Error("Wallet provider not found.");
+    const fromPubkey = provider.publicKey || (walletPubkey?new window.solanaWeb3.PublicKey(walletPubkey):null);
+    if(!fromPubkey) throw new Error("Connect wallet first.");
+    const feePubkey = new window.solanaWeb3.PublicKey(FEE_WALLET);
+    const tx = new window.solanaWeb3.Transaction().add(
+      window.solanaWeb3.SystemProgram.transfer({
+        fromPubkey,
+        toPubkey: feePubkey,
+        lamports: feeLamports
+      })
+    );
+    const sig = await provider.signAndSendTransaction(tx);
+    const txId = sig?.signature || sig;
+    if(!txId) throw new Error("Fee transaction was not confirmed by wallet.");
+    console.log("✅ Platform fee paid:", reason, txId, "lamports:", feeLamports);
+    return txId;
+  }
+
+  async function handleSingleSendFee(){
+    if(!connected||!walletPubkey) return;
+    if(!recipient||!(parseFloat(amount)>0)) return;
+    try{
+      setSendingFee(true);
+      const feeSol = computeFeeSolFromTokenAmount(tokAmt, tokLive.price, liveSolPrice);
+      const sig = await chargePlatformFeeInSol(feeSol, "single-send");
+      alert(`Platform fee paid successfully.\nTx: ${sig}\n\nMain transfer logic remains unchanged.`);
+      await fetchBalances(walletPubkey);
+    }catch(e){
+      alert("Fee payment failed: "+(e.message||e));
+      console.error("Single fee payment failed:", e);
+    }finally{
+      setSendingFee(false);
+    }
+  }
+
+  async function handleBulkSendFee({rows,bulkMode,liveRate,tok}){
+    if(!connected||!walletPubkey) return;
+    try{
+      setSendingFee(true);
+      const safeRows = Array.isArray(rows)?rows:[];
+      if(safeRows.length===0) throw new Error("No valid recipients.");
+      const totalFeeSol = safeRows.reduce((sum,row)=>{
+        const n = parseFloat(row.amount)||0;
+        if(n<=0) return sum;
+        const tokenAmount = bulkMode==="fiat" ? (n/liveRate)/(tok.price||1) : n;
+        return sum + computeFeeSolFromTokenAmount(tokenAmount, tok.price, liveSolPrice);
+      },0);
+      const sig = await chargePlatformFeeInSol(totalFeeSol, `bulk-send-${safeRows.length}`);
+      alert(`Platform fee paid for ${safeRows.length} recipient(s).\nTx: ${sig}\n\nMain transfer logic remains unchanged.`);
+      await fetchBalances(walletPubkey);
+    }catch(e){
+      alert("Bulk fee payment failed: "+(e.message||e));
+      console.error("Bulk fee payment failed:", e);
+    }finally{
+      setSendingFee(false);
+    }
+  }
+
   return (
     <div className="page">
       <div className="hex-bg"/>
@@ -1244,7 +1334,13 @@ function App() {
                 </div>
 
                 {bulkMode?(
-                  <BulkSendPanel tok={tokLive} connected={connected} getLiveRate={getLiveCurrRate}/>
+                  <BulkSendPanel
+                    tok={tokLive}
+                    connected={connected}
+                    getLiveRate={getLiveCurrRate}
+                    onSendBulkFee={handleBulkSendFee}
+                    sendingFee={sendingFee}
+                  />
                 ):(
                   <>
                     {/* Amount block */}
@@ -1259,8 +1355,15 @@ function App() {
                       />
                     </div>
 
-                    <button className="send-btn" disabled={!connected||!recipient||!num}>
-                      {!connected?"Connect wallet to send":!recipient?"Enter a .sol recipient":`Send ${dispTok} ${tokLive.symbol}`}
+                    <button className="send-btn" disabled={!connected||!recipient||!num||sendingFee} onClick={handleSingleSendFee}>
+                      {!connected
+                        ?"Connect wallet to send"
+                        :!recipient
+                          ?"Enter a .sol recipient"
+                          :sendingFee
+                            ?"Processing..."
+                            :`Send ${dispTok} ${tokLive.symbol}`
+                      }
                     </button>
                   </>
                 )}
