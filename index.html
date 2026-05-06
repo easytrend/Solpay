@@ -3,13 +3,35 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Web3 Payments via .sol Domains</title>
+<title>Solpay — Web3 Payments via .sol Domains</title>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@solana/web3.js@1.95.3/lib/index.iife.min.js"></script>
+<script>
+// Buffer polyfill for browser
+if (typeof window !== 'undefined' && !window.Buffer) {
+  window.Buffer = {
+    from: function(data, encoding) {
+      if (typeof data === 'string') {
+        const encoder = new TextEncoder();
+        return encoder.encode(data);
+      }
+      return new Uint8Array(data);
+    },
+    alloc: function(size) { return new Uint8Array(size); },
+    concat: function(arrays) {
+      const total = arrays.reduce((s, a) => s + a.length, 0);
+      const result = new Uint8Array(total);
+      let offset = 0;
+      arrays.forEach(a => { result.set(a, offset); offset += a.length; });
+      return result;
+    }
+  };
+}
+</script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -375,6 +397,14 @@ footer a { color:var(--lime); text-decoration:none; }
 .wt-error{background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.25);border-radius:10px;padding:10px 14px;font-size:12px;color:var(--red);margin-bottom:8px}
 .nav-addr{font-size:11px;font-family:var(--mono);color:var(--text2);background:rgba(255,255,255,0.05);border-radius:8px;padding:4px 10px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wt-section-lbl{font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em;margin-top:4px}
+
+/* PROGRESS BAR */
+.bulk-progress-bar { height:6px; background:rgba(255,255,255,0.08); border-radius:3px; overflow:hidden; }
+.bulk-progress-fill { height:100%; background:var(--lime); border-radius:3px; transition:width 0.3s ease; }
+
+/* MODAL ITEM — wider right column */
+.modal-item { display:flex; align-items:center; gap:12px; padding:9px 8px; border-radius:10px; cursor:pointer; transition:background 0.1s; border-bottom:1px solid rgba(255,255,255,0.04); }
+.modal-item:hover { background:rgba(255,255,255,0.05); }
 </style>
 </head>
 <body>
@@ -469,19 +499,19 @@ const CURRENCIES = [
 ];
 
 const TOKENS = [
-  { symbol:"SOL",   name:"Solana",         color:"#9945FF", bg:"#2d1a4e", price:148.5 },
-  { symbol:"USDC",  name:"USD Coin",        color:"#2775CA", bg:"#1a2a3e", price:1.0 },
-  { symbol:"USDT",  name:"Tether",          color:"#26a17b", bg:"#1a3030", price:1.0 },
-  { symbol:"BONK",  name:"Bonk",            color:"#f5922f", bg:"#3e2a1a", price:0.0000185 },
-  { symbol:"JUP",   name:"Jupiter",         color:"#2fbd91", bg:"#1a3028", price:0.72 },
-  { symbol:"RAY",   name:"Raydium",         color:"#3b8eea", bg:"#1a2a3e", price:2.15 },
-  { symbol:"PYTH",  name:"Pyth Network",    color:"#a78bfa", bg:"#2a1a4e", price:0.31 },
-  { symbol:"RNDR",  name:"Render",          color:"#f87171", bg:"#3e1a1a", price:5.4 },
-  { symbol:"WIF",   name:"dogwifhat",       color:"#fbbf24", bg:"#3e2e0a", price:1.82 },
-  { symbol:"JITO",  name:"Jito",            color:"#34d399", bg:"#1a3028", price:2.95 },
+  { symbol:"SOL",   name:"Solana",         color:"#9945FF", bg:"#2d1a4e", price:148.5, logo:"https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png" },
+  { symbol:"USDC",  name:"USD Coin",        color:"#2775CA", bg:"#1a2a3e", price:1.0,   logo:"https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png" },
+  { symbol:"USDT",  name:"Tether",          color:"#26a17b", bg:"#1a3030", price:1.0,   logo:"https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.png" },
+  { symbol:"BONK",  name:"Bonk",            color:"#f5922f", bg:"#3e2a1a", price:0.0000185, logo:"https://arweave.net/hQiPZOsRZXGXBJd_82PhVdlM_hACsT_q6wqwf5cSY7I" },
+  { symbol:"JUP",   name:"Jupiter",         color:"#2fbd91", bg:"#1a3028", price:0.72,  logo:"https://static.jup.ag/jup/icon.png" },
+  { symbol:"RAY",   name:"Raydium",         color:"#3b8eea", bg:"#1a2a3e", price:2.15,  logo:"https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R/logo.png" },
+  { symbol:"PYTH",  name:"Pyth Network",    color:"#a78bfa", bg:"#2a1a4e", price:0.31,  logo:"https://pyth.network/token.svg" },
+  { symbol:"RNDR",  name:"Render",          color:"#f87171", bg:"#3e1a1a", price:5.4,   logo:"https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof/logo.png" },
+  { symbol:"WIF",   name:"dogwifhat",       color:"#fbbf24", bg:"#3e2e0a", price:1.82,  logo:"https://bafkreibk3covs5ltyqxa272uodhculbgn2dxpwgp35cxpo3sky7r7hyvt4.ipfs.nftstorage.link" },
+  { symbol:"JITO",  name:"Jito",            color:"#34d399", bg:"#1a3028", price:2.95,  logo:"https://storage.googleapis.com/token-metadata/JitoSOL-256.png" },
   { symbol:"DRIFT", name:"Drift Protocol",  color:"#c084fc", bg:"#2a1a3e", price:0.44 },
-  { symbol:"ORCA",  name:"Orca",            color:"#2dd4bf", bg:"#1a3030", price:1.07 },
-  { symbol:"MSOL",  name:"Marinade SOL",    color:"#fb7185", bg:"#3e1a20", price:168.2 },
+  { symbol:"ORCA",  name:"Orca",            color:"#2dd4bf", bg:"#1a3030", price:1.07,  logo:"https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE/logo.png" },
+  { symbol:"MSOL",  name:"Marinade SOL",    color:"#fb7185", bg:"#3e1a20", price:168.2, logo:"https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So/logo.png" },
   { symbol:"STSOL", name:"Lido Staked SOL", color:"#60a5fa", bg:"#1a2030", price:166.8 },
   { symbol:"GMT",   name:"STEPN",           color:"#facc15", bg:"#3e3010", price:0.18 },
   { symbol:"GST",   name:"Green Satoshi",   color:"#4ade80", bg:"#1a3020", price:0.009 },
@@ -519,6 +549,11 @@ function fmtFiat(v,code) {
   if(v<0.01) return v.toFixed(6)+" "+code;
   return v.toFixed(2)+" "+code;
 }
+// Format to 6 significant digits (for balance display)
+function fmtSig6(v) {
+  if(!v||isNaN(v)||v===0) return "0";
+  return Number(v.toPrecision(6)).toLocaleString(undefined,{maximumSignificantDigits:6});
+}
 
 function toLamports(solAmount){
   return Math.ceil((Number(solAmount)||0)*LAMPORTS_PER_SOL);
@@ -543,6 +578,9 @@ const COINGECKO_IDS = {
   JUP:"jupiter-exchange-solana", RAY:"raydium", PYTH:"pyth-network",
   RNDR:"render-token", WIF:"dogwifhat", JITO:"jito-governance-token",
   ORCA:"orca", MSOL:"msol", GMT:"stepn", FIDA:"bonfida",
+  DRIFT:"drift-protocol", SLND:"solend", STEP:"step-finance",
+  ATLAS:"star-atlas", SAMO:"samoyedcoin", MNGO:"mango-markets",
+  SRM:"serum", JSOL:"jpool-staked-sol",
 };
 
 // Fiat API fallback chain (all free, no key, CORS-safe, cover NGN + all African currencies)
@@ -561,7 +599,17 @@ const FIAT_APIS = [
   },
 ];
 
+// ── 30-second in-memory price cache ──
+const _priceCache = { data: null, ts: 0 };
+const PRICE_CACHE_TTL = 30_000; // 30 s
+
 async function fetchLiveRates() {
+  const now = Date.now();
+  // Return cached result if still fresh
+  if (_priceCache.data && (now - _priceCache.ts) < PRICE_CACHE_TTL) {
+    return _priceCache.data;
+  }
+
   const result = { fiat:{}, crypto:{}, updatedAt:null, fiatSource:"static" };
 
   // 1. Fiat rates — try each API until one works
@@ -580,20 +628,40 @@ async function fetchLiveRates() {
     }catch(e){ console.warn("Fiat API failed ("+api.url+"):", e.message); }
   }
 
-  // 2. Crypto prices (USD) from CoinGecko
+  // 2. Crypto prices (USD) — CoinGecko primary, Jupiter fallback per-token
   try{
     const ids = Object.values(COINGECKO_IDS).join(",");
     const r = await fetch(
-      `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`
+      `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_last_updated_at=true`,
+      { signal: AbortSignal.timeout(8000) }
     );
+    if(!r.ok) throw new Error("HTTP "+r.status);
     const j = await r.json();
     Object.entries(COINGECKO_IDS).forEach(([sym,id])=>{
       if(j[id]?.usd) result.crypto[sym] = j[id].usd;
     });
-    console.log("✅ Crypto prices loaded | SOL=$"+result.crypto.SOL);
-  }catch(e){ console.warn("CoinGecko failed:", e.message); }
+    console.log("✅ CoinGecko prices | SOL=$"+result.crypto.SOL);
+  }catch(e){
+    console.warn("CoinGecko failed:", e.message);
+    // Fallback: Jupiter price API for Solana tokens
+    try{
+      const mintIds = Object.keys(KNOWN_MINTS).join(",");
+      const r2 = await fetch(`https://price.jup.ag/v6/price?ids=${mintIds}`,
+        { signal: AbortSignal.timeout(6000) });
+      if(r2.ok){
+        const j2 = await r2.json();
+        Object.entries(KNOWN_MINTS).forEach(([mint,meta])=>{
+          const p = j2?.data?.[mint]?.price;
+          if(typeof p==="number"&&p>0) result.crypto[meta.symbol] = p;
+        });
+        console.log("✅ Jupiter fallback prices | SOL=$"+result.crypto.SOL);
+      }
+    }catch(e2){ console.warn("Jupiter fallback also failed:", e2.message); }
+  }
 
   result.updatedAt = new Date().toLocaleTimeString();
+  _priceCache.data = result;
+  _priceCache.ts = now;
   return result;
 }
 
@@ -607,13 +675,6 @@ function parseCSV(text) {
     const amt=parseFloat((p[1]||"").trim());
     return {id:Date.now()+i+Math.random(),domain,amount:isNaN(amt)?"":String(amt),valid:domain.length>2};
   }).filter(r=>r.domain);
-}
-
-function dlTemplate() {
-  const csv="wallet_or_domain,amount\nexample.sol,50\nfriend.sol,100\nABC123walletXYZ,25\n";
-  const a=document.createElement("a");
-  a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
-  a.download="bulk-send-template.csv"; a.click();
 }
 
 // ── Currency Dropdown ──
@@ -730,7 +791,7 @@ function AmountInput({ amount, setAmount, inputMode, setInputMode, currency, set
 }
 
 // ── Bulk Send Panel ──
-function BulkSendPanel({ tok, connected, getLiveRate, onSendBulkFee, sendingFee }) {
+function BulkSendPanel({ tok, connected, getLiveRate, onSendBulkFee, sendingFee, bulkProgress }) {
   const [rows,setRows]=React.useState([]);
   const [drag,setDrag]=React.useState(false);
   const [globalAmt,setGlobalAmt]=React.useState("");
@@ -747,7 +808,7 @@ function BulkSendPanel({ tok, connected, getLiveRate, onSendBulkFee, sendingFee 
     if(["csv","txt"].includes(ext)){
       const r=new FileReader(); r.onload=e=>setRows(v=>[...v,...parseCSV(e.target.result)]); r.readAsText(file);
     } else if(["xlsx","xls"].includes(ext)){
-      alert("XLSX detected! In production this uses SheetJS. Please export as CSV for now.");
+      alert("XLSX detected! Please export as CSV for now.");
     } else { alert("Please upload .csv or .xlsx"); }
   };
 
@@ -774,12 +835,22 @@ function BulkSendPanel({ tok, connected, getLiveRate, onSendBulkFee, sendingFee 
 
   const colLabel=bulkMode==="fiat"?bulkCurr:tok.symbol;
 
+  // Merge live per-row status from parent
+  const rowsWithStatus = rows.map(r=>{
+    const ps = bulkProgress&&bulkProgress[r.id];
+    return ps ? {...r, txStatus:ps.status, txId:ps.txId, txErr:ps.err} : r;
+  });
+
+  // Progress bar
+  const doneCount = bulkProgress ? Object.values(bulkProgress).filter(p=>p.status==="confirmed"||p.status==="failed").length : 0;
+  const totalSending = bulkProgress ? Object.keys(bulkProgress).length : 0;
+  const progressPct = totalSending>0 ? Math.round((doneCount/totalSending)*100) : 0;
+
   return (
     <div>
       {/* Amount + currency selector */}
       <div className="field">
         <div className="field-label">Default Amount per Recipient</div>
-        {/* Currency row — on top in fiat mode */}
         {bulkMode==="fiat"&&(
           <CurrDrop selected={bulkCurr} onSelect={setBulkCurr} showAsRow={true}
             rateLabel={`1 USD = ${fmtRate(liveRate)} ${staticCurr.code}`}/>
@@ -820,17 +891,13 @@ function BulkSendPanel({ tok, connected, getLiveRate, onSendBulkFee, sendingFee 
       {/* Upload / table */}
       {rows.length===0?(
         <>
-          <div className="tmpl-btns">
-            <button className="tmpl-btn" onClick={dlTemplate}>📄 CSV template</button>
-            <button className="tmpl-btn" onClick={dlTemplate}>📊 XLSX template</button>
-          </div>
           <div className={`upload-zone ${drag?"drag":""}`}
             onClick={()=>fileRef.current.click()}
             onDragOver={e=>{e.preventDefault();setDrag(true);}} onDragLeave={()=>setDrag(false)} onDrop={handleDrop}>
             <div className="upload-icon">📂</div>
             <div className="upload-title">Drop file or click to browse</div>
-            <div className="upload-sub">Supports <span>.csv</span> and <span>.xlsx</span> · Up to 1,000 recipients</div>
-            <input ref={fileRef} type="file" className="upload-input" accept=".csv,.xlsx,.xls,.txt" onChange={handleFile}/>
+            <div className="upload-sub">Supports <span>.csv</span> · Up to 1,000 recipients</div>
+            <input ref={fileRef} type="file" className="upload-input" accept=".csv,.txt" onChange={handleFile}/>
           </div>
           <button className="add-manual" onClick={addManual}>＋ Add recipients manually</button>
         </>
@@ -838,17 +905,31 @@ function BulkSendPanel({ tok, connected, getLiveRate, onSendBulkFee, sendingFee 
         <>
           <div style={{display:"flex",gap:8,marginBottom:10}}>
             <button className="tmpl-btn" style={{padding:"7px 10px"}} onClick={()=>fileRef.current.click()}>＋ Upload more</button>
-            <input ref={fileRef} type="file" className="upload-input" accept=".csv,.xlsx,.xls,.txt" onChange={handleFile}/>
+            <input ref={fileRef} type="file" className="upload-input" accept=".csv,.txt" onChange={handleFile}/>
           </div>
           <div className="recip-hdr">
             <span className="recip-count"><strong>{validRows.length}</strong> of {rows.length} ready</span>
             <button className="clear-btn" onClick={clearAll}>Clear all</button>
           </div>
+
+          {/* Progress bar — shown during send */}
+          {sendingFee&&totalSending>0&&(
+            <div style={{marginBottom:10}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"var(--text3)",marginBottom:4}}>
+                <span>Sending… {doneCount}/{totalSending}</span>
+                <span>{progressPct}%</span>
+              </div>
+              <div style={{height:6,background:"rgba(255,255,255,0.08)",borderRadius:3,overflow:"hidden"}}>
+                <div style={{height:"100%",width:progressPct+"%",background:"var(--lime)",borderRadius:3,transition:"width 0.3s"}}/>
+              </div>
+            </div>
+          )}
+
           <div className="recip-table">
             <div className="rt-head">
               <span>Wallet / Domain</span><span>Amt ({colLabel})</span><span>Status</span><span></span>
             </div>
-            {rows.map(row=>(
+            {rowsWithStatus.map(row=>(
               <div key={row.id} className="rt-row">
                 <div className="rt-domain">
                   <input style={{background:"transparent",border:"none",outline:"none",color:"var(--text)",fontFamily:"var(--mono)",fontSize:11,width:"100%"}}
@@ -858,9 +939,23 @@ function BulkSendPanel({ tok, connected, getLiveRate, onSendBulkFee, sendingFee 
                   <input style={{background:"transparent",border:"none",outline:"none",color:"var(--text2)",fontFamily:"var(--mono)",fontSize:11,width:"90%"}}
                     value={row.amount} placeholder="0" type="number" onChange={e=>updateRow(row.id,"amount",e.target.value)}/>
                 </div>
-                <div className={`rt-status ${row.valid&&row.amount?"s-ok":"s-err"}`}>
+                <div className={`rt-status ${
+                  row.txStatus==="confirmed" ? "s-ok" :
+                  row.txStatus==="failed"    ? "s-err" :
+                  row.txStatus==="pending"   ? "" :
+                  row.valid&&row.amount      ? "s-ok" : "s-err"
+                }`}>
                   <span className="s-dot"/>
-                  {row.valid&&row.amount?"Ready":!row.valid?"Invalid":"No amt"}
+                  {row.txStatus==="confirmed" ? (
+                    <a href={`https://solscan.io/tx/${row.txId}`} target="_blank" rel="noopener"
+                      style={{color:"var(--green)",fontSize:10,fontWeight:600,textDecoration:"none"}}>✓ Sent ↗</a>
+                  ) : row.txStatus==="failed" ? (
+                    <span title={row.txErr} style={{cursor:"help"}}>Failed ⚠</span>
+                  ) : row.txStatus==="pending" ? (
+                    <span style={{color:"var(--text3)"}}>Sending…</span>
+                  ) : (
+                    row.valid&&row.amount?"Ready":!row.valid?"Invalid":"No amt"
+                  )}
                 </div>
                 <button className="rt-del" onClick={()=>removeRow(row.id)}>✕</button>
               </div>
@@ -882,7 +977,7 @@ function BulkSendPanel({ tok, connected, getLiveRate, onSendBulkFee, sendingFee 
           :validRows.length===0
             ?"Add recipients to continue"
             :sendingFee
-              ?"Processing..."
+              ?`Sending… ${doneCount}/${totalSending||validRows.length}`
               :`Send ${tok.symbol} to ${validRows.length} recipient${validRows.length!==1?"s":""}`
         }
       </button>
@@ -924,15 +1019,16 @@ async function rpcFetch(method, params){
 const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 const KNOWN_MINTS = {
-  "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v":{symbol:"USDC",name:"USD Coin",price:1.0},
-  "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB":{symbol:"USDT",name:"Tether",price:1.0},
-  "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263":{symbol:"BONK",name:"Bonk",price:0.0000185},
-  "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN":{symbol:"JUP",name:"Jupiter",price:0.72},
-  "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R":{symbol:"RAY",name:"Raydium",price:2.15},
-  "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3":{symbol:"PYTH",name:"Pyth Network",price:0.31},
-  "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm":{symbol:"WIF",name:"dogwifhat",price:1.82},
-  "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE":{symbol:"ORCA",name:"Orca",price:1.07},
-  "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So":{symbol:"mSOL",name:"Marinade SOL",price:168.2},
+  "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v":{symbol:"USDC",name:"USD Coin",price:1.0,logo:"https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png"},
+  "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB":{symbol:"USDT",name:"Tether",price:1.0,logo:"https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.png"},
+  "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263":{symbol:"BONK",name:"Bonk",price:0.0000185,logo:"https://arweave.net/hQiPZOsRZXGXBJd_82PhVdlM_hACsT_q6wqwf5cSY7I"},
+  "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN":{symbol:"JUP",name:"Jupiter",price:0.72,logo:"https://static.jup.ag/jup/icon.png"},
+  "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R":{symbol:"RAY",name:"Raydium",price:2.15,logo:"https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R/logo.png"},
+  "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3":{symbol:"PYTH",name:"Pyth Network",price:0.31,logo:"https://pyth.network/token.svg"},
+  "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm":{symbol:"WIF",name:"dogwifhat",price:1.82,logo:"https://bafkreibk3covs5ltyqxa272uodhculbgn2dxpwgp35cxpo3sky7r7hyvt4.ipfs.nftstorage.link"},
+  "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE":{symbol:"ORCA",name:"Orca",price:1.07,logo:"https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE/logo.png"},
+  "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So":{symbol:"mSOL",name:"Marinade SOL",price:168.2,logo:"https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So/logo.png"},
+  "So11111111111111111111111111111111111111112":{symbol:"SOL",name:"Solana",price:148.5,logo:"https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png"},
 };
 
 async function fetchJupiterPricesByMint(mints){
@@ -952,6 +1048,32 @@ async function fetchJupiterPricesByMint(mints){
     console.warn("Jupiter price fetch failed:",e.message);
     return {};
   }
+}
+
+// Fetch token metadata (logos, names, decimals) from Jupiter token list
+let _jupTokenCache = null;
+async function fetchJupiterTokenMeta(mints){
+  if(!_jupTokenCache){
+    try{
+      const r=await fetch("https://token.jup.ag/strict");
+      if(!r.ok) throw new Error("HTTP "+r.status);
+      const tokens=await r.json();
+      _jupTokenCache={};
+      tokens.forEach(t=>{
+        _jupTokenCache[t.address]={
+          symbol:t.symbol,name:t.name,logo:t.logoURI,decimals:t.decimals
+        };
+      });
+    }catch(e){
+      console.warn("Jupiter token list failed:",e.message);
+      _jupTokenCache={};
+    }
+  }
+  const out={};
+  (mints||[]).forEach(m=>{
+    if(_jupTokenCache[m]) out[m]=_jupTokenCache[m];
+  });
+  return out;
 }
 
 function readUiTokenAmount(tokenAmount){
@@ -986,7 +1108,10 @@ function WalletTokensPanel({walletPubkey,solBalance,splTokens,loading,error,onRe
       ):(
         <>
           <div className="wt-sol-card">
-            <div className="wt-sol-icon">◎</div>
+            <div className="wt-sol-icon">
+              <img src="https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png" alt="SOL" style={{width:28,height:28,borderRadius:"50%"}} onError={e=>{e.target.style.display="none";e.target.nextSibling.style.display="block";}} />
+              <span style={{display:"none"}}>◎</span>
+            </div>
             <div>
               <div className="wt-sol-bal">{solBalance!==null?solBalance.toFixed(5):"—"} SOL</div>
               <div className="wt-sol-usd">{solBalance!==null?`≈ $${(solBalance*SOL_PRICE).toFixed(2)} USD`:""}</div>
@@ -1001,7 +1126,15 @@ function WalletTokensPanel({walletPubkey,solBalance,splTokens,loading,error,onRe
                 const td=TOKENS.find(x=>x.symbol===t.symbol)||{};
                 return (
                   <div key={i} className="wt-tok-row">
-                    <div className="tok-icon" style={{background:td.bg||"rgba(255,255,255,0.08)",color:td.color||"#ccc",width:36,height:36,fontSize:10,flexShrink:0}}>{(t.symbol||"?").slice(0,4)}</div>
+                    <div style={{position:"relative",width:36,height:36,flexShrink:0}}>
+                      <img
+                        src={t.logo||td.logo||`https://img.jup.ag/tokens/${t.mint||t.symbol}`}
+                        alt={t.symbol}
+                        style={{width:36,height:36,borderRadius:"50%",objectFit:"cover"}}
+                        onError={e=>{e.target.style.display="none";e.target.nextSibling.style.display="flex";}}
+                      />
+                      <div className="tok-icon" style={{background:td.bg||"rgba(255,255,255,0.08)",color:td.color||"#ccc",width:36,height:36,fontSize:10,display:"none",position:"absolute",top:0,left:0}}>{(t.symbol||"?").slice(0,4)}</div>
+                    </div>
                     <div className="wt-tok-info">
                       <div className="wt-tok-sym">{t.symbol||"Unknown"}</div>
                       <div className="wt-tok-name">{t.name||t.mint.slice(0,12)+"…"}</div>
@@ -1021,12 +1154,222 @@ function WalletTokensPanel({walletPubkey,solBalance,splTokens,loading,error,onRe
   );
 }
 
+// ── SNS Domain Resolution ──
+function isValidSolanaAddress(address){
+  try{
+    const pubkey=new window.solanaWeb3.PublicKey(address);
+    return window.solanaWeb3.PublicKey.isOnCurve(pubkey.toBytes());
+  }catch{
+    return false;
+  }
+}
+
+async function resolveSNSDomain(domain){
+  const cleaned=domain.toLowerCase().replace('.sol','').trim();
+  if(isValidSolanaAddress(cleaned)) return cleaned;
+  
+  try{
+    const SNS_PROGRAM_ID=new window.solanaWeb3.PublicKey('namesLPneVptA9Z5rqUDD9tMTWEJwofgaYwp8cawRkX');
+    const ROOT_DOMAIN=new window.solanaWeb3.PublicKey('58PwtjSDuFHuUkYjH9BYnnQKHfwo9reZhC2zMJv9JPkx');
+    
+    const input='\0'+cleaned;
+    const buffer=new TextEncoder().encode(input);
+    const hashBuffer=await window.crypto.subtle.digest('SHA-256',buffer);
+    const hashedName=new Uint8Array(hashBuffer);
+    
+    const [nameAccountKey]=await window.solanaWeb3.PublicKey.findProgramAddress(
+      [hashedName,new Uint8Array(32),ROOT_DOMAIN.toBytes()],
+      SNS_PROGRAM_ID
+    );
+    
+    const accountInfo=await rpcFetch("getAccountInfo",[nameAccountKey.toBase58(),{encoding:"base64"}]);
+    if(!accountInfo||!accountInfo.value) throw new Error("Domain not found");
+    
+    // Decode base64 account data
+    const b64=accountInfo.value.data[0];
+    const binary=atob(b64);
+    const bytes=new Uint8Array(binary.length);
+    for(let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
+    const ownerBytes=bytes.slice(32,64);
+    const owner=new window.solanaWeb3.PublicKey(ownerBytes);
+    return owner.toBase58();
+  }catch(e){
+    console.error('SNS resolution failed:',e);
+    throw new Error('Could not resolve .sol domain');
+  }
+}
+
+// ── Wallet Select Modal — real-time detection, persistence ──
+const WALLET_STORAGE_KEY = "solpay_last_wallet";
+
+function detectWallets() {
+  const detected = [];
+  // Standard Solana wallet adapters
+  if (window.phantom?.solana?.isPhantom)
+    detected.push({ name:"Phantom",   provider:window.phantom.solana,  icon:"👻", id:"phantom" });
+  else if (window.solana?.isPhantom)
+    detected.push({ name:"Phantom",   provider:window.solana,          icon:"👻", id:"phantom" });
+  if (window.solflare?.isSolflare)
+    detected.push({ name:"Solflare",  provider:window.solflare,        icon:"🔥", id:"solflare" });
+  if (window.backpack?.isBackpack)
+    detected.push({ name:"Backpack",  provider:window.backpack,        icon:"🎒", id:"backpack" });
+  if (window.glow?.isGlow)
+    detected.push({ name:"Glow",      provider:window.glow,            icon:"✨", id:"glow" });
+  if (window.coin98?.sol)
+    detected.push({ name:"Coin98",    provider:window.coin98.sol,      icon:"🪙", id:"coin98" });
+  if (window.exodus?.solana)
+    detected.push({ name:"Exodus",    provider:window.exodus.solana,   icon:"🌊", id:"exodus" });
+  if (window.trustwallet?.solana)
+    detected.push({ name:"Trust Wallet", provider:window.trustwallet.solana, icon:"🛡️", id:"trust" });
+  // Brave built-in wallet
+  if (window.braveSolana)
+    detected.push({ name:"Brave Wallet", provider:window.braveSolana, icon:"🦁", id:"brave" });
+  return detected;
+}
+
+function WalletSelectModal({onClose, onSelect}) {
+  const [wallets, setWallets] = React.useState(detectWallets);
+  const [connecting, setConnecting] = React.useState(null);
+  const [err, setErr] = React.useState(null);
+
+  // Re-scan every 500 ms so newly installed extensions appear without reload
+  React.useEffect(() => {
+    const id = setInterval(() => setWallets(detectWallets()), 500);
+    return () => clearInterval(id);
+  }, []);
+
+  async function handleSelect(w) {
+    setConnecting(w.id);
+    setErr(null);
+    try {
+      await onSelect(w.provider, w.id);
+    } catch(e) {
+      setErr(e.message || "Connection rejected");
+      setConnecting(null);
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-sheet" style={{maxWidth:380}} onClick={e=>e.stopPropagation()}>
+        <div className="modal-head">
+          <span className="modal-title">Connect Wallet</span>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+        {err && (
+          <div style={{background:"rgba(248,113,113,0.12)",border:"1px solid rgba(248,113,113,0.3)",
+            borderRadius:8,padding:"8px 12px",fontSize:12,color:"var(--red)",marginBottom:10}}>
+            ⚠ {err}
+          </div>
+        )}
+        {wallets.length === 0 ? (
+          <div style={{padding:"2rem",textAlign:"center",color:"var(--text2)"}}>
+            <div style={{fontSize:36,marginBottom:12}}>🔐</div>
+            <div style={{fontSize:14,fontWeight:600,marginBottom:6}}>No Wallet Detected</div>
+            <div style={{fontSize:12,color:"var(--text3)",lineHeight:1.6}}>
+              Install <a href="https://phantom.app" target="_blank" rel="noopener" style={{color:"var(--lime)"}}>Phantom</a> or{" "}
+              <a href="https://solflare.com" target="_blank" rel="noopener" style={{color:"var(--lime)"}}>Solflare</a> browser extension,
+              then this list will update automatically.
+            </div>
+          </div>
+        ) : (
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {wallets.map(w => (
+              <div key={w.id} className="modal-item"
+                style={{opacity:connecting&&connecting!==w.id?0.4:1,cursor:connecting?"not-allowed":"pointer"}}
+                onClick={()=>!connecting&&handleSelect(w)}>
+                <div style={{fontSize:26,width:36,textAlign:"center"}}>{w.icon}</div>
+                <div style={{flex:1}}>
+                  <div className="m-name">{w.name}</div>
+                  <div className="m-full">Solana wallet</div>
+                </div>
+                {connecting===w.id && (
+                  <div className="spin" style={{width:16,height:16,borderWidth:2}}/>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{marginTop:14,fontSize:11,color:"var(--text3)",textAlign:"center",lineHeight:1.5}}>
+          By connecting you agree to the terms of service.
+          Your keys never leave your device.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Receive Panel ──
+function ReceivePanel({walletPubkey}){
+  const [copied,setCopied]=React.useState(false);
+  const copyAddress=()=>{
+    navigator.clipboard.writeText(walletPubkey);
+    setCopied(true);
+    setTimeout(()=>setCopied(false),2000);
+  };
+  if(!walletPubkey){
+    return (
+      <div className="no-wallet">
+        <div className="no-wallet-icon">🔐</div>
+        <div className="no-wallet-title">Connect your wallet</div>
+        <div className="no-wallet-sub">Connect to view your receive address and QR code</div>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <div className="card-title">Receive Crypto</div>
+      <p className="card-sub">Share your wallet address or QR code to receive payments</p>
+      <div className="qr-wrap">
+        <QRGen domain={walletPubkey}/>
+        <div className="qr-domain">{walletPubkey.slice(0,8)}...{walletPubkey.slice(-8)}</div>
+        <div className="qr-label">Your Solana Wallet Address</div>
+        <button className={`copy-btn ${copied?"copy-ok":""}`} onClick={copyAddress}>
+          {copied?"✓ Copied!":"📋 Copy Address"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Toast Notification ──
+function Toast({message,type,link,linkLabel,onClose}){
+  React.useEffect(()=>{
+    const timer=setTimeout(onClose,7000);
+    return ()=>clearTimeout(timer);
+  },[]);
+  return (
+    <div style={{
+      position:"fixed",top:20,right:20,
+      background:type==="error"?"rgba(30,10,10,0.97)":"rgba(10,30,15,0.97)",
+      border:`1px solid ${type==="error"?"rgba(248,113,113,0.4)":"rgba(74,222,128,0.4)"}`,
+      color:"#fff",padding:"12px 16px",borderRadius:12,
+      boxShadow:"0 8px 24px rgba(0,0,0,0.5)",zIndex:1000,maxWidth:320,
+      display:"flex",flexDirection:"column",gap:6
+    }}>
+      <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
+        <span style={{fontSize:16,flexShrink:0}}>{type==="error"?"❌":"✅"}</span>
+        <span style={{fontSize:13,lineHeight:1.4,flex:1}}>{message}</span>
+        <button onClick={onClose} style={{background:"none",border:"none",color:"rgba(255,255,255,0.4)",cursor:"pointer",fontSize:14,padding:0,flexShrink:0}}>✕</button>
+      </div>
+      {link&&(
+        <a href={link} target="_blank" rel="noopener noreferrer"
+          style={{fontSize:11,color:"var(--lime)",textDecoration:"none",fontWeight:600,marginLeft:24}}>
+          {linkLabel||"View transaction"} ↗
+        </a>
+      )}
+    </div>
+  );
+}
+
 // ── Main App ──
 function App() {
 
   const [bulkMode,setBulkMode]=React.useState(false);
   const [connected,setConnected]=React.useState(false);
   const [walletPubkey,setWalletPubkey]=React.useState(null);
+  const [activeTab,setActiveTab]=React.useState("send");
+  const [showWalletSelect,setShowWalletSelect]=React.useState(false);
   const [solBalance,setSolBalance]=React.useState(null);
   const [splTokens,setSplTokens]=React.useState([]);
   const [walletLoading,setWalletLoading]=React.useState(false);
@@ -1039,6 +1382,8 @@ function App() {
   const [showModal,setShowModal]=React.useState(false);
   const [tokenQ,setTokenQ]=React.useState("");
   const [sendingFee,setSendingFee]=React.useState(false);
+  const [toast,setToast]=React.useState(null);
+  const [bulkProgress,setBulkProgress]=React.useState(null); // {rowId: {status,txId,err}}
 
   const [liveRates,setLiveRates]=React.useState({fiat:{},crypto:{},updatedAt:null});
   const [ratesLoading,setRatesLoading]=React.useState(true);
@@ -1052,7 +1397,7 @@ function App() {
       setRatesLoading(false);
     }
     load();
-    const id=setInterval(load,60000);
+    const id=setInterval(load,30000); // refresh every 30s to match cache TTL
     return()=>clearInterval(id);
   },[]);
 
@@ -1088,20 +1433,25 @@ function App() {
     return[solEntry,...splEntries];
   },[connected,solBalance,splTokens,liveRates]);
 
-  // Connected wallets should only pick from held tokens; otherwise show the static catalog.
-  const selectableTokens = React.useMemo(()=>{
-    if(connected){
-      return (walletTokenList||[]).filter(t=>t.symbol==="SOL"||t.balance==null||t.balance>0).map(t=>{
-        const meta=findTokenMeta(t.symbol)||{};
-        return {...meta,...t,price:t.price||getLiveTokPrice(t.symbol)||meta.price||0};
-      });
-    }
-    return TOKENS.map(t=>({...t,price:getLiveTokPrice(t.symbol)||t.price||0}));
-  },[connected, walletTokenList, liveRates]);
-  const filteredTokens = selectableTokens.filter(t=>
-    (t.symbol||"").toLowerCase().includes(tokenQ.toLowerCase()) ||
-    (t.name||"").toLowerCase().includes(tokenQ.toLowerCase())
-  );
+  // Token list: alphabetically sorted, searchable by symbol/name/mint address
+  const filteredTokens = React.useMemo(()=>{
+    const q = tokenQ.toLowerCase().trim();
+    const list = connected
+      ? (walletTokenList||[]).filter(t=>t.symbol==="SOL"||t.balance==null||t.balance>0).map(t=>{
+          const meta=findTokenMeta(t.symbol)||{};
+          return {...meta,...t,price:t.price||getLiveTokPrice(t.symbol)||meta.price||0};
+        })
+      : TOKENS.map(t=>({...t,price:getLiveTokPrice(t.symbol)||t.price||0}));
+    const filtered = q
+      ? list.filter(t=>
+          (t.symbol||"").toLowerCase().includes(q) ||
+          (t.name||"").toLowerCase().includes(q) ||
+          (t.mint||"").toLowerCase().includes(q)   // contract address search
+        )
+      : list;
+    // Alphabetical sort by symbol
+    return [...filtered].sort((a,b)=>(a.symbol||"").localeCompare(b.symbol||""));
+  },[connected, walletTokenList, liveRates, tokenQ]);
 
   // Find selected token — check wallet list first, then static
   const tok = (walletTokenList&&walletTokenList.find(t=>(t.symbol||"").toUpperCase()===token.toUpperCase()))
@@ -1169,8 +1519,20 @@ function App() {
       });
       const raw=Object.values(byMint);
       const mintPrices=await fetchJupiterPricesByMint(raw.map(t=>t.mint));
+      const mintMeta=await fetchJupiterTokenMeta(raw.map(t=>t.mint));
       const toks=raw
-        .map(t=>({...t,price:mintPrices[t.mint]||t.price||0}))
+        .map(t=>{
+          const meta=mintMeta[t.mint]||{};
+          const knownMint=KNOWN_MINTS[t.mint]||{};
+          return {
+            ...t,
+            price:mintPrices[t.mint]||t.price||0,
+            logo:knownMint.logo||meta.logo||null,
+            symbol:meta.symbol||t.symbol,
+            name:meta.name||t.name,
+            decimals:meta.decimals||t.decimals||6
+          };
+        })
         .sort((a,b)=>(b.uiAmount*(b.price||0))-(a.uiAmount*(a.price||0)));
       setSplTokens(toks);
     }catch(e){
@@ -1180,20 +1542,61 @@ function App() {
   }
 
   async function connectWallet(){
-    const provider=window.solana||window.solflare;
-    if(!provider){alert("No Solana wallet found.\nInstall Phantom or Solflare browser extension then reload.");return;}
+    setShowWalletSelect(true);
+  }
+
+  async function handleWalletSelect(provider, walletId){
+    setShowWalletSelect(false);
+    if(!provider){
+      alert("No Solana wallet found.\nInstall Phantom or Solflare browser extension then reload.");
+      return;
+    }
     try{
       const resp=await provider.connect();
       const pk=resp.publicKey.toString();
       setWalletPubkey(pk);setConnected(true);
+      // Persist chosen wallet so we can auto-reconnect on reload
+      try{ localStorage.setItem(WALLET_STORAGE_KEY, walletId||"phantom"); }catch(_){}
       fetchBalances(pk);
-    }catch(e){console.error("Wallet connect error:",e);}
+    }catch(e){
+      const msg = e?.message||"";
+      if(msg.includes("User rejected")||msg.includes("rejected")||e?.code===4001){
+        setToast({msg:"Connection cancelled by user.", type:"error"});
+      } else {
+        setToast({msg:"Wallet connection failed: "+(msg||"Unknown error"), type:"error"});
+      }
+      console.error("Wallet connect error:",e);
+    }
   }
 
   function disconnectWallet(){
     setConnected(false);setWalletPubkey(null);setSolBalance(null);setSplTokens([]);setWalletError(null);
-    try{const p=window.solana||window.solflare;if(p)p.disconnect();}catch(e){}
+    try{ localStorage.removeItem(WALLET_STORAGE_KEY); }catch(_){}
+    try{const p=window.phantom?.solana||window.solana||window.solflare;if(p)p.disconnect();}catch(e){}
   }
+
+  // Auto-reconnect on mount if a wallet was previously connected
+  React.useEffect(()=>{
+    async function tryAutoReconnect(){
+      try{
+        const lastWallet = localStorage.getItem(WALLET_STORAGE_KEY);
+        if(!lastWallet) return;
+        const wallets = detectWallets();
+        const w = wallets.find(x=>x.id===lastWallet) || wallets[0];
+        if(!w) return;
+        // Use eager connect (no popup) — only works if already authorized
+        const resp = await w.provider.connect({ onlyIfTrusted: true });
+        const pk = resp.publicKey.toString();
+        setWalletPubkey(pk); setConnected(true);
+        fetchBalances(pk);
+      }catch(e){
+        // Silently ignore — user hasn't authorized yet or wallet not installed
+        try{ localStorage.removeItem(WALLET_STORAGE_KEY); }catch(_){}
+      }
+    }
+    tryAutoReconnect();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
 
   async function chargePlatformFeeInSol(totalFeeSol, reason){
     const feeLamports = toLamports(totalFeeSol);
@@ -1222,13 +1625,138 @@ function App() {
     if(!recipient||!(parseFloat(amount)>0)) return;
     try{
       setSendingFee(true);
-      const feeSol = computeFeeSolFromTokenAmount(tokAmt, tokLive.price, liveSolPrice);
-      const sig = await chargePlatformFeeInSol(feeSol, "single-send");
-      alert(`Platform fee paid successfully.\nTx: ${sig}\n\nMain transfer logic remains unchanged.`);
-      await fetchBalances(walletPubkey);
+      const provider=window.solana||window.solflare;
+      if(!provider) throw new Error("Wallet provider not found.");
+
+      // Resolve recipient address (supports .sol domains and raw addresses)
+      let recipientAddress = recipient.trim();
+      if(recipientAddress.endsWith(".sol")||!isValidSolanaAddress(recipientAddress)){
+        // Try SNS resolution
+        try{
+          recipientAddress = await resolveSNSDomain(recipientAddress);
+          if(!recipientAddress) throw new Error("Domain not found");
+        }catch(e){
+          throw new Error("Could not resolve '"+recipient+"' — check the .sol domain or wallet address.");
+        }
+      }
+
+      const fromPubkey = provider.publicKey;
+      const toPubkey = new window.solanaWeb3.PublicKey(recipientAddress);
+      const feePubkey = new window.solanaWeb3.PublicKey(FEE_WALLET);
+
+      // Calculate amounts
+      const tokenAmount = tokAmt;
+      const feeSol = computeFeeSolFromTokenAmount(tokenAmount, tokLive.price, liveSolPrice);
+
+      let tx = new window.solanaWeb3.Transaction();
+
+      if(tokLive.symbol==="SOL"){
+        // SOL transfer
+        const lamports = toLamports(tokenAmount);
+        if(lamports<=0) throw new Error("Amount too small.");
+        tx.add(window.solanaWeb3.SystemProgram.transfer({
+          fromPubkey, toPubkey, lamports
+        }));
+      } else {
+        // SPL Token transfer
+        const mintAddress = tokLive.mint;
+        if(!mintAddress) throw new Error("Token mint address not found. Please select a token from your wallet.");
+
+        const TOKEN_PROGRAM_ID = new window.solanaWeb3.PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+        const ASSOCIATED_TOKEN_PROGRAM_ID = new window.solanaWeb3.PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJe1bRS");
+        const mintPubkey = new window.solanaWeb3.PublicKey(mintAddress);
+
+        // Find associated token accounts
+        const [fromATA] = await window.solanaWeb3.PublicKey.findProgramAddress(
+          [fromPubkey.toBytes(), TOKEN_PROGRAM_ID.toBytes(), mintPubkey.toBytes()],
+          ASSOCIATED_TOKEN_PROGRAM_ID
+        );
+        const [toATA] = await window.solanaWeb3.PublicKey.findProgramAddress(
+          [toPubkey.toBytes(), TOKEN_PROGRAM_ID.toBytes(), mintPubkey.toBytes()],
+          ASSOCIATED_TOKEN_PROGRAM_ID
+        );
+
+        // Check if recipient ATA exists, if not create it
+        const rpcUrl = RPC_LIST[0];
+        const ataInfo = await rpcFetch("getAccountInfo",[toATA.toBase58(),{encoding:"base64"}]);
+        if(!ataInfo||!ataInfo.value){
+          // Create ATA for recipient
+          const createATAIx = {
+            keys:[
+              {pubkey:fromPubkey, isSigner:true, isWritable:true},
+              {pubkey:toATA, isSigner:false, isWritable:true},
+              {pubkey:toPubkey, isSigner:false, isWritable:false},
+              {pubkey:mintPubkey, isSigner:false, isWritable:false},
+              {pubkey:new window.solanaWeb3.PublicKey("11111111111111111111111111111111"), isSigner:false, isWritable:false},
+              {pubkey:TOKEN_PROGRAM_ID, isSigner:false, isWritable:false},
+              {pubkey:new window.solanaWeb3.PublicKey("SysvarRent111111111111111111111111111111111"), isSigner:false, isWritable:false},
+            ],
+            programId: ASSOCIATED_TOKEN_PROGRAM_ID,
+            data: new Uint8Array(0)
+          };
+          tx.add(createATAIx);
+        }
+
+        // SPL Token transfer instruction
+        const decimals = tokLive.decimals||6;
+        const rawAmount = Math.floor(tokenAmount * Math.pow(10, decimals));
+        if(rawAmount<=0) throw new Error("Amount too small.");
+
+        // Build transfer instruction data: [3, amount as u64 LE]
+        const data = new Uint8Array(9);
+        data[0] = 3; // Transfer instruction
+        const view = new DataView(data.buffer);
+        // Write u64 little-endian (split into two u32 for JS compatibility)
+        view.setUint32(1, rawAmount & 0xFFFFFFFF, true);
+        view.setUint32(5, Math.floor(rawAmount / 0x100000000), true);
+
+        tx.add({
+          keys:[
+            {pubkey:fromATA, isSigner:false, isWritable:true},
+            {pubkey:toATA, isSigner:false, isWritable:true},
+            {pubkey:fromPubkey, isSigner:true, isWritable:false},
+          ],
+          programId: TOKEN_PROGRAM_ID,
+          data
+        });
+      }
+
+      // Add platform fee
+      const feeLamports = toLamports(feeSol);
+      if(feeLamports>0){
+        tx.add(window.solanaWeb3.SystemProgram.transfer({
+          fromPubkey, toPubkey:feePubkey, lamports:feeLamports
+        }));
+      }
+
+      // Get recent blockhash
+      const bhResult = await rpcFetch("getLatestBlockhash",[{commitment:"confirmed"}]);
+      tx.recentBlockhash = bhResult.value.blockhash;
+      tx.feePayer = fromPubkey;
+
+      // Sign and send
+      const sig = await provider.signAndSendTransaction(tx);
+      const txId = sig?.signature || sig;
+      if(!txId) throw new Error("Transaction was not confirmed by wallet.");
+
+      // Show immediate success with Solscan link
+      const shortRecip = recipient.length>20 ? recipient.slice(0,8)+"…"+recipient.slice(-6) : recipient;
+      setToast({
+        msg:`✅ Sent ${fmtTok(tokenAmount)} ${tokLive.symbol} to ${shortRecip}`,
+        type:"success",
+        link:`https://solscan.io/tx/${txId}`,
+        linkLabel:"View on Solscan"
+      });
+      setRecipient("");
+      setAmount("0");
+
+      // Background: wait for confirmation then refresh balances
+      rpcFetch("confirmTransaction",[txId,{commitment:"confirmed"}])
+        .then(()=>fetchBalances(walletPubkey))
+        .catch(()=>fetchBalances(walletPubkey)); // refresh even if confirm poll fails
     }catch(e){
-      alert("Fee payment failed: "+(e.message||e));
-      console.error("Single fee payment failed:", e);
+      setToast({msg:"❌ "+(e.message||"Transfer failed"), type:"error"});
+      console.error("Transfer failed:", e);
     }finally{
       setSendingFee(false);
     }
@@ -1240,18 +1768,118 @@ function App() {
       setSendingFee(true);
       const safeRows = Array.isArray(rows)?rows:[];
       if(safeRows.length===0) throw new Error("No valid recipients.");
-      const totalFeeSol = safeRows.reduce((sum,row)=>{
-        const n = parseFloat(row.amount)||0;
-        if(n<=0) return sum;
-        const tokenAmount = bulkMode==="fiat" ? (n/liveRate)/(tok.price||1) : n;
-        return sum + computeFeeSolFromTokenAmount(tokenAmount, tok.price, liveSolPrice);
-      },0);
-      const sig = await chargePlatformFeeInSol(totalFeeSol, `bulk-send-${safeRows.length}`);
-      alert(`Platform fee paid for ${safeRows.length} recipient(s).\nTx: ${sig}\n\nMain transfer logic remains unchanged.`);
+      const provider = window.solana||window.solflare;
+      if(!provider) throw new Error("Wallet provider not found.");
+      const fromPubkey = provider.publicKey;
+      const feePubkey = new window.solanaWeb3.PublicKey(FEE_WALLET);
+
+      // Initialise all rows as pending
+      const initProgress = {};
+      safeRows.forEach(r=>{ initProgress[r.id]={status:"pending",txId:null,err:null}; });
+      setBulkProgress(initProgress);
+
+      let successCount=0, failCount=0;
+
+      for(let i=0;i<safeRows.length;i++){
+        const row=safeRows[i];
+        try{
+          const n=parseFloat(row.amount)||0;
+          if(n<=0){ setBulkProgress(p=>({...p,[row.id]:{status:"failed",err:"Zero amount"}})); failCount++; continue; }
+          const tokenAmount=bulkMode==="fiat"?(n/liveRate)/(tok.price||1):n;
+          if(tokenAmount<=0){ setBulkProgress(p=>({...p,[row.id]:{status:"failed",err:"Amount too small"}})); failCount++; continue; }
+
+          // Resolve recipient
+          let recipientAddress=row.domain.trim();
+          if(recipientAddress.endsWith(".sol")||!isValidSolanaAddress(recipientAddress)){
+            try{ recipientAddress=await resolveSNSDomain(recipientAddress); }
+            catch(e){ throw new Error("Could not resolve: "+row.domain); }
+          }
+
+          const toPubkey=new window.solanaWeb3.PublicKey(recipientAddress);
+          const feeSol=computeFeeSolFromTokenAmount(tokenAmount,tok.price,liveSolPrice);
+          let tx=new window.solanaWeb3.Transaction();
+
+          if(tok.symbol==="SOL"){
+            const lamports=toLamports(tokenAmount);
+            if(lamports<=0){ setBulkProgress(p=>({...p,[row.id]:{status:"failed",err:"Amount too small"}})); failCount++; continue; }
+            tx.add(window.solanaWeb3.SystemProgram.transfer({fromPubkey,toPubkey,lamports}));
+          } else {
+            const TOKEN_PROGRAM_ID=new window.solanaWeb3.PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+            const ASSOCIATED_TOKEN_PROGRAM_ID=new window.solanaWeb3.PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJe1bRS");
+            const mintPubkey=new window.solanaWeb3.PublicKey(tok.mint);
+            const [fromATA]=await window.solanaWeb3.PublicKey.findProgramAddress(
+              [fromPubkey.toBytes(),TOKEN_PROGRAM_ID.toBytes(),mintPubkey.toBytes()],
+              ASSOCIATED_TOKEN_PROGRAM_ID
+            );
+            const [toATA]=await window.solanaWeb3.PublicKey.findProgramAddress(
+              [toPubkey.toBytes(),TOKEN_PROGRAM_ID.toBytes(),mintPubkey.toBytes()],
+              ASSOCIATED_TOKEN_PROGRAM_ID
+            );
+            const ataInfo=await rpcFetch("getAccountInfo",[toATA.toBase58(),{encoding:"base64"}]);
+            if(!ataInfo||!ataInfo.value){
+              tx.add({
+                keys:[
+                  {pubkey:fromPubkey,isSigner:true,isWritable:true},
+                  {pubkey:toATA,isSigner:false,isWritable:true},
+                  {pubkey:toPubkey,isSigner:false,isWritable:false},
+                  {pubkey:mintPubkey,isSigner:false,isWritable:false},
+                  {pubkey:new window.solanaWeb3.PublicKey("11111111111111111111111111111111"),isSigner:false,isWritable:false},
+                  {pubkey:TOKEN_PROGRAM_ID,isSigner:false,isWritable:false},
+                  {pubkey:new window.solanaWeb3.PublicKey("SysvarRent111111111111111111111111111111111"),isSigner:false,isWritable:false},
+                ],
+                programId:ASSOCIATED_TOKEN_PROGRAM_ID,
+                data:new Uint8Array(0)
+              });
+            }
+            const decimals=tok.decimals||6;
+            const rawAmount=Math.floor(tokenAmount*Math.pow(10,decimals));
+            const data=new Uint8Array(9);
+            data[0]=3;
+            const view=new DataView(data.buffer);
+            view.setUint32(1,rawAmount&0xFFFFFFFF,true);
+            view.setUint32(5,Math.floor(rawAmount/0x100000000),true);
+            tx.add({
+              keys:[
+                {pubkey:fromATA,isSigner:false,isWritable:true},
+                {pubkey:toATA,isSigner:false,isWritable:true},
+                {pubkey:fromPubkey,isSigner:true,isWritable:false},
+              ],
+              programId:TOKEN_PROGRAM_ID,
+              data
+            });
+          }
+
+          const feeLamports=toLamports(feeSol);
+          if(feeLamports>0){
+            tx.add(window.solanaWeb3.SystemProgram.transfer({fromPubkey,toPubkey:feePubkey,lamports:feeLamports}));
+          }
+
+          const bhResult=await rpcFetch("getLatestBlockhash",[{commitment:"confirmed"}]);
+          tx.recentBlockhash=bhResult.value.blockhash;
+          tx.feePayer=fromPubkey;
+
+          const sig=await provider.signAndSendTransaction(tx);
+          const txId=sig?.signature||sig;
+          if(!txId) throw new Error("Not confirmed by wallet");
+
+          setBulkProgress(p=>({...p,[row.id]:{status:"confirmed",txId,err:null}}));
+          successCount++;
+        }catch(e){
+          failCount++;
+          const errMsg = e.message||String(e);
+          setBulkProgress(p=>({...p,[row.id]:{status:"failed",txId:null,err:errMsg}}));
+          console.error("Bulk row failed:",row.domain,e);
+        }
+      }
+
+      const msg=successCount>0
+        ?`✅ Sent to ${successCount} recipient${successCount!==1?"s":""}${failCount>0?" · "+failCount+" failed":""}`
+        :"❌ All transfers failed";
+      setToast({msg, type:successCount>0?"success":"error"});
       await fetchBalances(walletPubkey);
     }catch(e){
-      alert("Bulk fee payment failed: "+(e.message||e));
-      console.error("Bulk fee payment failed:", e);
+      setToast({msg:"❌ Bulk send failed: "+(e.message||e), type:"error"});
+      console.error("Bulk send failed:", e);
     }finally{
       setSendingFee(false);
     }
@@ -1284,6 +1912,15 @@ function App() {
       <div className="main">
         <div className="app-card">
           <div className="card-body">
+            {/* Tab Navigation */}
+            <div className="tabs" style={{marginBottom:"1.2rem"}}>
+              <button className={`tab-btn ${activeTab==="send"?"active":""}`} onClick={()=>setActiveTab("send")}>Send</button>
+              <button className={`tab-btn ${activeTab==="receive"?"active":""}`} onClick={()=>setActiveTab("receive")}>Receive</button>
+              <button className={`tab-btn ${activeTab==="wallet"?"active":""}`} onClick={()=>setActiveTab("wallet")}>💼 Wallet</button>
+            </div>
+
+            {/* Send Tab */}
+            {activeTab==="send"&&(
             <div>
                 {/* Title + bulk toggle inline */}
                 <div className="title-row">
@@ -1311,7 +1948,15 @@ function App() {
                   <div className="field-label">Select Token</div>
                   <div className="token-row" onClick={()=>setShowModal(true)}>
                     <div className="tok-left">
-                      <div className="tok-icon" style={{background:tokLive.bg,color:tokLive.color}}>{tokLive.symbol.slice(0,4)}</div>
+                      <div style={{position:"relative",width:32,height:32,flexShrink:0}}>
+                        <img
+                          src={tokLive.logo||`https://img.jup.ag/tokens/${tokLive.mint||tokLive.symbol}`}
+                          alt={tokLive.symbol}
+                          style={{width:32,height:32,borderRadius:"50%",objectFit:"cover"}}
+                          onError={e=>{e.target.style.display="none";e.target.nextSibling.style.display="flex";}}
+                        />
+                        <div className="tok-icon" style={{background:tokLive.bg,color:tokLive.color,width:32,height:32,display:"none",position:"absolute",top:0,left:0,fontSize:9}}>{tokLive.symbol.slice(0,4)}</div>
+                      </div>
                       <div>
                         <span className="tok-sym">{tokLive.symbol}</span>
                         <span style={{fontSize:11,color:"var(--text3)",marginLeft:6}}>${tokLive.price<0.01?tokLive.price.toFixed(6):tokLive.price.toLocaleString()}</span>
@@ -1340,6 +1985,7 @@ function App() {
                     getLiveRate={getLiveCurrRate}
                     onSendBulkFee={handleBulkSendFee}
                     sendingFee={sendingFee}
+                    bulkProgress={bulkProgress}
                   />
                 ):(
                   <>
@@ -1355,19 +2001,65 @@ function App() {
                       />
                     </div>
 
-                    <button className="send-btn" disabled={!connected||!recipient||!num||sendingFee} onClick={handleSingleSendFee}>
+                    {/* Network fee estimate */}
+                    {connected&&num>0&&(
+                      <div style={{fontSize:11,color:"var(--text3)",marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
+                        <span>⛽ Est. network fee:</span>
+                        <span style={{color:"var(--text2)",fontFamily:"var(--mono)"}}>
+                          ~{(computeFeeSolFromTokenAmount(tokAmt,tokLive.price,liveSolPrice)+0.000005).toFixed(6)} SOL
+                          {liveSolPrice>0&&(
+                            <span style={{color:"var(--text3)"}}>
+                              {" "}(≈ ${((computeFeeSolFromTokenAmount(tokAmt,tokLive.price,liveSolPrice)+0.000005)*liveSolPrice).toFixed(4)})
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                    )}
+                    <button className="send-btn" disabled={
+                      !connected ||
+                      !recipient ||
+                      !num ||
+                      sendingFee ||
+                      // Disable if amount exceeds balance
+                      (tokLive.symbol==="SOL"
+                        ? (solBalance!==null && tokAmt > solBalance)
+                        : (tokLive.balance!=null && tokAmt > tokLive.balance))
+                    } onClick={handleSingleSendFee}>
                       {!connected
                         ?"Connect wallet to send"
                         :!recipient
                           ?"Enter a .sol recipient"
-                          :sendingFee
-                            ?"Processing..."
-                            :`Send ${dispTok} ${tokLive.symbol}`
+                          :(tokLive.symbol==="SOL" && solBalance!==null && tokAmt>solBalance)
+                            ?"Insufficient SOL balance"
+                            :(tokLive.balance!=null && tokAmt>tokLive.balance)
+                              ?"Insufficient "+tokLive.symbol+" balance"
+                              :sendingFee
+                                ?"Processing..."
+                                :`Send ${dispTok} ${tokLive.symbol}`
                       }
                     </button>
                   </>
                 )}
               </div>
+            )}
+
+            {/* Receive Tab */}
+            {activeTab==="receive"&&(
+              <ReceivePanel walletPubkey={walletPubkey}/>
+            )}
+
+            {/* Wallet Tab */}
+            {activeTab==="wallet"&&(
+              <WalletTokensPanel
+                walletPubkey={walletPubkey}
+                solBalance={solBalance}
+                splTokens={splTokens}
+                loading={walletLoading}
+                error={walletError}
+                onRefresh={()=>walletPubkey&&fetchBalances(walletPubkey)}
+                solPrice={liveSolPrice}
+              />
+            )}
           </div>
         </div>
 
@@ -1415,26 +2107,42 @@ function App() {
                 ⟳ Fetching your wallet balances…
               </div>
             )}
-            <input className="modal-search" autoFocus placeholder="Search by name or symbol…" value={tokenQ} onChange={e=>setTokenQ(e.target.value)}/>
+            <input className="modal-search" autoFocus placeholder="Search by name, symbol or address…" value={tokenQ} onChange={e=>setTokenQ(e.target.value)}/>
             {filteredTokens.length===0&&(
               <div style={{textAlign:"center",padding:"1.5rem",color:"var(--text3)",fontSize:13}}>No tokens found</div>
             )}
             {filteredTokens.map(t=>(
               <div key={t.mint||t.symbol} className="modal-item" onClick={()=>{setToken(t.symbol);setShowModal(false);setTokenQ("");}}>
-                <div className="tok-icon" style={{background:t.bg||"rgba(255,255,255,0.08)",color:t.color||"#ccc",width:36,height:36,fontSize:10}}>{(t.symbol||"").slice(0,4)}</div>
-                <div>
-                  <div className="m-name">{t.symbol}</div>
-                  <div className="m-full">{t.name}</div>
+                <div style={{position:"relative",width:36,height:36,flexShrink:0}}>
+                  <img
+                    src={t.logo||`https://img.jup.ag/tokens/${t.mint||t.symbol}`}
+                    alt={t.symbol}
+                    style={{width:36,height:36,borderRadius:"50%",objectFit:"cover"}}
+                    onError={e=>{e.target.style.display="none";e.target.nextSibling.style.display="flex";}}
+                  />
+                  <div className="tok-icon" style={{background:t.bg||"rgba(255,255,255,0.08)",color:t.color||"#ccc",width:36,height:36,fontSize:10,display:"none",position:"absolute",top:0,left:0}}>{(t.symbol||"").slice(0,4)}</div>
                 </div>
-                <div style={{marginLeft:"auto",textAlign:"right",minWidth:90}}>
-                  {/* Always show live price */}
+                <div style={{flex:1,minWidth:0}}>
+                  <div className="m-name">{t.symbol}</div>
+                  <div className="m-full" style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:140}}>{t.name}</div>
+                </div>
+                <div style={{marginLeft:"auto",textAlign:"right",minWidth:100,flexShrink:0}}>
+                  {/* USD price per 1 token */}
                   {t.price>0&&(
-                    <div className="m-price">${t.price<0.0001?t.price.toFixed(8):t.price<1?t.price.toFixed(4):t.price.toLocaleString()}</div>
+                    <div className="m-price" style={{fontSize:12,fontWeight:600}}>
+                      ${t.price<0.000001?t.price.toExponential(2):t.price<0.0001?t.price.toFixed(8):t.price<1?t.price.toFixed(4):t.price.toLocaleString(undefined,{maximumFractionDigits:2})}
+                    </div>
                   )}
-                  {/* Show wallet balance as bonus badge when loaded */}
+                  {/* Balance: 6 significant digits */}
                   {t.balance!=null&&(
                     <div style={{fontSize:10,color:"var(--lime)",fontFamily:"var(--mono)",marginTop:2,fontWeight:600}}>
-                      {t.balance.toLocaleString(undefined,{maximumFractionDigits:4})} held
+                      {Number(t.balance.toPrecision(6)).toLocaleString(undefined,{maximumSignificantDigits:6})} held
+                    </div>
+                  )}
+                  {/* USD value of held balance */}
+                  {t.balance!=null&&t.price>0&&(
+                    <div style={{fontSize:10,color:"var(--text3)",fontFamily:"var(--mono)"}}>
+                      ≈ ${(t.balance*t.price).toLocaleString(undefined,{maximumFractionDigits:2})}
                     </div>
                   )}
                 </div>
@@ -1442,6 +2150,16 @@ function App() {
             ))}
           </div>
         </div>
+      )}
+
+      {/* Wallet Selection Modal */}
+      {showWalletSelect&&(
+        <WalletSelectModal onClose={()=>setShowWalletSelect(false)} onSelect={handleWalletSelect}/>
+      )}
+
+      {/* Toast Notification */}
+      {toast&&(
+        <Toast message={toast.msg} type={toast.type} link={toast.link} linkLabel={toast.linkLabel} onClose={()=>setToast(null)}/>
       )}
     </div>
   );
