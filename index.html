@@ -1018,140 +1018,136 @@ async function fetchJupiterPricesByMint(mints){
   }
 }
 
-// ── Token metadata: Jupiter strict list + all-tokens fallback + Metaplex on-chain ──
-let _jupStrictCache  = null; // verified tokens only
-let _jupAllCache     = null; // all tokens (includes LP, meme, unknown)
+// ── Token metadata: Jupiter strict list + targeted per-mint lookup + Metaplex on-chain ──
+let _jupStrictCache = null;  // verified tokens: { [mint]: {symbol,name,logo,decimals} }
+let _jupMintCache   = {};    // per-mint cache for tokens not in strict list
 
 async function fetchJupiterTokenMeta(mints){
   const mintsArr = (mints||[]).filter(Boolean);
-  if(mintsArr.length===0) return {};
+  if(mintsArr.length === 0) return {};
 
-  // 1. Try strict list first (fast, cached)
+  // 1. Populate strict list cache once (fast, ~1MB, covers 99% of common tokens)
   if(!_jupStrictCache){
     try{
-      const r=await fetch("https://token.jup.ag/strict",
+      const r = await fetch("https://token.jup.ag/strict",
         { signal: AbortSignal.timeout(10000) });
-      if(!r.ok) throw new Error("HTTP "+r.status);
-      const tokens=await r.json();
-      _jupStrictCache={};
-      tokens.forEach(t=>{
-        _jupStrictCache[t.address]={
-          symbol:t.symbol, name:t.name, logo:t.logoURI, decimals:t.decimals
+      if(!r.ok) throw new Error("HTTP " + r.status);
+      const tokens = await r.json();
+      _jupStrictCache = {};
+      tokens.forEach(t => {
+        _jupStrictCache[t.address] = {
+          symbol: t.symbol, name: t.name, logo: t.logoURI, decimals: t.decimals
         };
       });
-      console.log("✅ Jupiter strict list loaded:", Object.keys(_jupStrictCache).length, "tokens");
+      console.log("✅ Jupiter strict list:", Object.keys(_jupStrictCache).length, "tokens");
     }catch(e){
       console.warn("Jupiter strict list failed:", e.message);
-      _jupStrictCache={};
+      _jupStrictCache = {};
     }
   }
 
-  // Check which mints are still missing after strict list
-  const missing = mintsArr.filter(m=>!_jupStrictCache[m]);
-
-  // 2. For missing mints, try the all-tokens list (larger, slower)
-  if(missing.length>0 && !_jupAllCache){
-    try{
-      const r=await fetch("https://token.jup.ag/all",
-        { signal: AbortSignal.timeout(15000) });
-      if(!r.ok) throw new Error("HTTP "+r.status);
-      const tokens=await r.json();
-      _jupAllCache={};
-      tokens.forEach(t=>{
-        _jupAllCache[t.address]={
-          symbol:t.symbol, name:t.name, logo:t.logoURI, decimals:t.decimals
-        };
-      });
-      console.log("✅ Jupiter all-tokens list loaded:", Object.keys(_jupAllCache).length, "tokens");
-    }catch(e){
-      console.warn("Jupiter all-tokens list failed:", e.message);
-      _jupAllCache={};
-    }
-  }
-
-  // 3. For still-missing mints, try Metaplex on-chain metadata
-  const stillMissing = missing.filter(m=>!(_jupAllCache&&_jupAllCache[m]));
-  const metaplexMeta = {};
-  if(stillMissing.length>0){
-    await Promise.allSettled(stillMissing.map(async mint=>{
-      try{
-        // Derive Metaplex metadata PDA: seeds = ["metadata", METAPLEX_PROGRAM, mint]
-        const METAPLEX_PROGRAM = new window.solanaWeb3.PublicKey(
-          "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
-        );
-        const mintPk = new window.solanaWeb3.PublicKey(mint);
-        const [metadataPDA] = await window.solanaWeb3.PublicKey.findProgramAddress(
-          [
-            new TextEncoder().encode("metadata"),
-            METAPLEX_PROGRAM.toBytes(),
-            mintPk.toBytes()
-          ],
-          METAPLEX_PROGRAM
-        );
-        const info = await rpcFetch("getAccountInfo",
-          [metadataPDA.toBase58(), {encoding:"base64"}]);
-        if(!info?.value?.data?.[0]) return;
-
-        // Decode Metaplex metadata (simplified — extract name, symbol, uri)
-        const b64 = info.value.data[0];
-        const bin = atob(b64);
-        const bytes = new Uint8Array(bin.length);
-        for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
-
-        // Metaplex metadata layout (after 1-byte key + 32-byte update_auth + 32-byte mint):
-        // offset 65: name (4-byte LE length prefix + UTF-8 bytes, padded to 32)
-        // offset 101: symbol (4-byte LE length prefix + UTF-8 bytes, padded to 10)
-        // offset 115: uri (4-byte LE length prefix + UTF-8 bytes, padded to 200)
-        const readStr = (offset) => {
-          const len = bytes[offset] | (bytes[offset+1]<<8) | (bytes[offset+2]<<16) | (bytes[offset+3]<<24);
-          if(len<=0||len>500) return "";
-          const chars = [];
-          for(let i=0;i<len;i++){
-            const c = bytes[offset+4+i];
-            if(c===0) break;
-            chars.push(String.fromCharCode(c));
+  // 2. For mints not in strict list, use Jupiter's per-token API (fast, targeted)
+  const missing = mintsArr.filter(m => !_jupStrictCache[m] && !_jupMintCache[m]);
+  if(missing.length > 0){
+    // Jupiter token info endpoint: GET /tokens/v1/token/{mint}
+    // Batch up to 100 at a time to avoid URL length limits
+    const BATCH = 100;
+    for(let i = 0; i < missing.length; i += BATCH){
+      const batch = missing.slice(i, i + BATCH);
+      await Promise.allSettled(batch.map(async mint => {
+        try{
+          const r = await fetch(
+            `https://tokens.jup.ag/token/${mint}`,
+            { signal: AbortSignal.timeout(5000) }
+          );
+          if(r.ok){
+            const t = await r.json();
+            if(t && t.address){
+              _jupMintCache[mint] = {
+                symbol: t.symbol || null,
+                name:   t.name   || null,
+                logo:   t.logoURI || t.icon || null,
+                decimals: t.decimals ?? null,
+              };
+              return;
+            }
           }
-          return chars.join("").trim();
-        };
-
-        const name   = readStr(65);
-        const symbol = readStr(101);
-        const uri    = readStr(115);
-
-        if(name||symbol){
-          metaplexMeta[mint] = {
-            symbol: symbol||("TKN-"+mint.slice(0,4)),
-            name:   name||("Token "+mint.slice(0,8)),
-            logo:   null, // will try to fetch from uri below
-            decimals: 0,
-            uri
-          };
-          // Optionally fetch off-chain JSON for logo
-          if(uri && uri.startsWith("http")){
-            try{
-              const jr = await fetch(uri, { signal: AbortSignal.timeout(4000) });
-              if(jr.ok){
-                const jj = await jr.json();
-                if(jj.image) metaplexMeta[mint].logo = jj.image;
-              }
-            }catch(_){}
-          }
+          // 404 or bad response — try Metaplex on-chain as last resort
+          await fetchMetaplexMeta(mint);
+        }catch(_){
+          // Mark as attempted so we don't retry on every render
+          if(!_jupMintCache[mint]) _jupMintCache[mint] = null;
         }
-      }catch(_){
-        // Silently skip — not all mints have Metaplex metadata
-      }
-    }));
+      }));
+    }
   }
 
-  // Merge all sources: strict > all > metaplex
-  const out={};
-  mintsArr.forEach(m=>{
-    out[m] = _jupStrictCache[m]
-      || (_jupAllCache&&_jupAllCache[m])
-      || metaplexMeta[m]
-      || null;
+  // 3. Build output map
+  const out = {};
+  mintsArr.forEach(m => {
+    out[m] = _jupStrictCache[m] || _jupMintCache[m] || null;
   });
   return out;
+}
+
+// Fetch Metaplex on-chain metadata for a single mint
+async function fetchMetaplexMeta(mint){
+  try{
+    const METAPLEX_PROGRAM = new window.solanaWeb3.PublicKey(
+      "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+    );
+    const mintPk = new window.solanaWeb3.PublicKey(mint);
+    const [metadataPDA] = await window.solanaWeb3.PublicKey.findProgramAddress(
+      [
+        new TextEncoder().encode("metadata"),
+        METAPLEX_PROGRAM.toBytes(),
+        mintPk.toBytes()
+      ],
+      METAPLEX_PROGRAM
+    );
+    const info = await rpcFetch("getAccountInfo",
+      [metadataPDA.toBase58(), {encoding:"base64"}]);
+    if(!info?.value?.data?.[0]) return;
+
+    const b64 = info.value.data[0];
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for(let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+
+    const readStr = (offset) => {
+      const len = bytes[offset] | (bytes[offset+1]<<8) | (bytes[offset+2]<<16) | (bytes[offset+3]<<24);
+      if(len <= 0 || len > 500) return "";
+      const chars = [];
+      for(let i = 0; i < len; i++){
+        const c = bytes[offset + 4 + i];
+        if(c === 0) break;
+        chars.push(String.fromCharCode(c));
+      }
+      return chars.join("").trim();
+    };
+
+    const name   = readStr(65);
+    const symbol = readStr(101);
+    const uri    = readStr(115);
+
+    if(name || symbol){
+      let logo = null;
+      if(uri && uri.startsWith("http")){
+        try{
+          const jr = await fetch(uri, { signal: AbortSignal.timeout(4000) });
+          if(jr.ok){ const jj = await jr.json(); if(jj.image) logo = jj.image; }
+        }catch(_){}
+      }
+      _jupMintCache[mint] = {
+        symbol: symbol || ("TKN-" + mint.slice(0,4)),
+        name:   name   || ("Token " + mint.slice(0,8)),
+        logo,
+        decimals: null,
+      };
+    }
+  }catch(_){
+    // Silently skip — not all mints have Metaplex metadata
+  }
 }
 
 function readUiTokenAmount(tokenAmount){
@@ -1502,15 +1498,22 @@ function App() {
     return()=>clearInterval(id);
   },[]);
 
-  // Auto-select first held token once balances load
+  // Auto-select: when filteredTokens changes and the current selection
+  // is no longer in the list, pick the first available token.
+  // Using a ref to avoid stale closure on `token`.
+  const tokenRef = React.useRef(token);
+  React.useEffect(()=>{ tokenRef.current = token; },[token]);
+
   React.useEffect(()=>{
     if(!connected || walletLoading) return;
-    if(filteredTokens.length===0) return;
-    // If current selection isn't in the wallet, pick the first held token
-    const currentInWallet = filteredTokens.find(t=>(t.symbol||"").toUpperCase()===token.toUpperCase());
-    if(!currentInWallet) {
+    if(filteredTokens.length === 0) return;
+    const currentInList = filteredTokens.find(
+      t => (t.symbol||"").toUpperCase() === tokenRef.current.toUpperCase()
+    );
+    if(!currentInList) {
       setToken(filteredTokens[0].symbol);
     }
+  // filteredTokens identity changes when splTokens or solBalance changes
   },[connected, walletLoading, filteredTokens]);
   function getLiveCurrRate(code){
     const staticC=CURRENCIES.find(c=>c.code===code)||CURRENCIES[0];
@@ -1527,184 +1530,203 @@ function App() {
     return TOKENS.find(t=>(t.symbol||"").toUpperCase()===String(symbol).toUpperCase())||null;
   }
 
-  // Build token list as soon as wallet is connected — don't wait for RPC balance
-  const liveSolPrice = liveRates.crypto["SOL"]||148.5;
+  // Build token list as soon as wallet is connected.
+  // SOL entry is always present once connected; balance fills in when RPC returns.
+  const liveSolPrice = liveRates.crypto["SOL"] || 148.5;
+
   const walletTokenList = React.useMemo(()=>{
     if(!connected) return null;
-    const solEntry={
+    const solPrice = liveRates.crypto["SOL"] || 148.5;
+    const solEntry = {
       symbol:"SOL", name:"Solana", color:"#9945FF", bg:"#2d1a4e",
-      price: liveRates.crypto["SOL"]||148.5,
-      balance: solBalance, // null while loading
+      price: solPrice,
+      balance: solBalance,   // null while loading — shown as "loading"
+      uiAmount: solBalance ?? 0,
       logo:"https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png"
     };
-    const splEntries=splTokens.map(t=>{
-      const meta=findTokenMeta(t.symbol)||{color:"#aaa",bg:"rgba(255,255,255,0.08)"};
-      const livePrice=liveRates.crypto[t.symbol]||t.price||meta.price||0;
-      return{...meta,...t,price:livePrice};
+    const splEntries = splTokens.map(t=>{
+      const meta = findTokenMeta(t.symbol) || { color:"#aaa", bg:"rgba(255,255,255,0.08)" };
+      // Live price from CoinGecko/Jupiter, fall back to what fetchBalances stored
+      const livePrice = liveRates.crypto[t.symbol] || t.price || meta.price || 0;
+      return { ...meta, ...t, price: livePrice };
     });
-    return[solEntry,...splEntries];
-  },[connected,solBalance,splTokens,liveRates]);
+    return [solEntry, ...splEntries];
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[connected, solBalance, splTokens, liveRates.crypto]);
+  // ↑ Only depend on liveRates.crypto (not the whole object) to avoid spurious re-runs
 
-  // Token list: only show held tokens when connected, alphabetically sorted
+  // ── filteredTokens: only held tokens, alphabetically sorted ──
+  // SOL is shown as soon as solBalance is known (even 0 SOL).
+  // SPL tokens are shown as soon as they appear in splTokens (balance > 0).
   const filteredTokens = React.useMemo(()=>{
-    // Before wallet connection: show nothing
     if(!connected || !walletTokenList) return [];
-    
+
     const q = tokenQ.toLowerCase().trim();
-    // Only show tokens with balance > 0 (SOL always included if balance loaded)
+
     const heldTokens = walletTokenList.filter(t => {
-      if(t.symbol === "SOL") return solBalance !== null; // SOL shown if balance loaded
-      return t.balance != null && t.balance > 0; // SPL tokens only if balance > 0
+      if(t.symbol === "SOL") {
+        // Show SOL once we have a balance reading (including 0 SOL wallets)
+        return solBalance !== null;
+      }
+      // Show SPL tokens with any positive balance
+      return (t.balance ?? t.uiAmount ?? 0) > 0;
     });
-    
+
     const filtered = q
-      ? heldTokens.filter(t=>
+      ? heldTokens.filter(t =>
           (t.symbol||"").toLowerCase().includes(q) ||
-          (t.name||"").toLowerCase().includes(q) ||
+          (t.name||"").toLowerCase().includes(q)   ||
           (t.mint||"").toLowerCase().includes(q)
         )
       : heldTokens;
-    
-    // Alphabetical sort by symbol
-    return [...filtered].sort((a,b)=>(a.symbol||"").localeCompare(b.symbol||""));
+
+    return [...filtered].sort((a,b) => (a.symbol||"").localeCompare(b.symbol||""));
   },[connected, walletTokenList, solBalance, tokenQ]);
 
-  // Find selected token — only from wallet list when connected
-  const tok = connected && walletTokenList
-    ? (walletTokenList.find(t=>(t.symbol||"").toUpperCase()===token.toUpperCase()) || walletTokenList[0])
-    : null;
+  // ── Selected token ──
+  // Derive from filteredTokens (not walletTokenList) so tok is always visible.
+  // Falls back to first available token if current selection isn't held.
+  const tok = React.useMemo(()=>{
+    if(!connected || filteredTokens.length === 0) return null;
+    return filteredTokens.find(t =>
+      (t.symbol||"").toUpperCase() === token.toUpperCase()
+    ) || filteredTokens[0];
+  },[connected, filteredTokens, token]);
 
   const curr=CURRENCIES.find(c=>c.code===currency)||CURRENCIES[0];
-  // Override with live rates
   const currRate = getLiveCurrRate(currency);
-  const tokPrice = tok ? (tok.price||getLiveTokPrice(tok.symbol)||0) : 0;
+  const tokPrice = tok ? (tok.price || getLiveTokPrice(tok.symbol) || 0) : 0;
   const num=parseFloat(amount)||0;
   const tokAmt=tok ? (inputMode==="fiat"?(num/currRate)/tokPrice:num) : 0;
-  const fiatAmt=tok ? (inputMode==="crypto"?num*tokPrice*currRate:num) : 0;
   const dispTok=fmtTok(tokAmt);
-  // Patch curr and tok with live values for child components
-  const currLive={...curr,rate:currRate};
-  const tokLive=tok ? {...tok,price:tokPrice} : null;
 
 
 
   async function fetchBalances(pubkey){
-    setWalletLoading(true);setWalletError(null);
+    setWalletLoading(true);
+    setWalletError(null);
     try{
-      // SOL balance
-      const balRes=await rpcFetch("getBalance",[pubkey,{commitment:"confirmed"}]);
-      setSolBalance(balRes.value/1e9);
+      // ── Step 1: SOL balance — fast, shows immediately ──
+      const balRes = await rpcFetch("getBalance",[pubkey,{commitment:"confirmed"}]);
+      const solBal = balRes.value / 1e9;
+      setSolBalance(solBal);
+      // SOL is now visible in the UI without waiting for SPL tokens
 
-      // SPL token accounts — both legacy Token Program and Token-2022
+      // ── Step 2: SPL token accounts (both programs) ──
       const tokenQueries = await Promise.allSettled([
         rpcFetch("getTokenAccountsByOwner",[
           pubkey,
-          {programId:TOKEN_PROGRAM},
-          {encoding:"jsonParsed",commitment:"confirmed"}
+          {programId: TOKEN_PROGRAM},
+          {encoding:"jsonParsed", commitment:"confirmed"}
         ]),
         rpcFetch("getTokenAccountsByOwner",[
           pubkey,
-          {programId:TOKEN_2022_PROGRAM},
-          {encoding:"jsonParsed",commitment:"confirmed"}
+          {programId: TOKEN_2022_PROGRAM},
+          {encoding:"jsonParsed", commitment:"confirmed"}
         ])
       ]);
       const tokenAccounts = tokenQueries
-        .filter(x=>x.status==="fulfilled")
-        .flatMap(x=>(x.value&&x.value.value)||[]);
+        .filter(x => x.status === "fulfilled")
+        .flatMap(x => (x.value && x.value.value) || []);
 
-      // Aggregate by mint — sum across multiple accounts for same mint
+      // ── Step 3: Parse token accounts into byMint map ──
       const byMint = {};
-      tokenAccounts.forEach(a=>{
+      tokenAccounts.forEach(a => {
         try{
-          const info=a?.account?.data?.parsed?.info;
-          if(!info||!info.mint) return;
-          const mint=info.mint;
-          const tokenAmount=info.tokenAmount;
+          const info = a?.account?.data?.parsed?.info;
+          if(!info || !info.mint) return;
+          const mint = info.mint;
+          const tokenAmount = info.tokenAmount;
           if(!tokenAmount) return;
 
-          const uiAmount=readUiTokenAmount(tokenAmount);
-          // Include zero-balance accounts in the map but mark them
-          // (we filter >0 later; keeping them lets us show NFTs with supply=1)
-          const decimals = Number(tokenAmount.decimals??0);
-          const rawAmount = Number(tokenAmount.amount||0);
+          const decimals  = Number(tokenAmount.decimals ?? 0);
+          const rawAmount = Number(tokenAmount.amount || 0);
+          const uiAmount  = readUiTokenAmount(tokenAmount);
 
-          const meta=KNOWN_MINTS[mint]||{};
-          const fallbackSym=("TKN-"+mint.slice(0,4)).toUpperCase();
+          const meta        = KNOWN_MINTS[mint] || {};
+          const fallbackSym = ("TKN-" + mint.slice(0,4)).toUpperCase();
 
           if(!byMint[mint]){
-            byMint[mint]={
+            byMint[mint] = {
               mint,
-              uiAmount:0,
-              balance:0,
-              rawAmount:0,
+              uiAmount:  0,
+              balance:   0,
+              rawAmount: 0,
               decimals,
-              symbol:meta.symbol||fallbackSym,
-              name:meta.name||("Token "+mint.slice(0,8)+"…"),
-              price:meta.price||0,
-              logo:meta.logo||null,
-              isNFT: decimals===0 && rawAmount===1, // likely NFT
+              symbol: meta.symbol || fallbackSym,
+              name:   meta.name   || ("Token " + mint.slice(0,8) + "…"),
+              price:  meta.price  || 0,
+              logo:   meta.logo   || null,
+              isNFT:  decimals === 0 && rawAmount === 1,
             };
           }
           byMint[mint].uiAmount  += uiAmount;
           byMint[mint].rawAmount += rawAmount;
           byMint[mint].balance    = byMint[mint].uiAmount;
-          // Re-evaluate NFT flag after aggregation
-          byMint[mint].isNFT = byMint[mint].decimals===0 && byMint[mint].rawAmount===1;
+          byMint[mint].isNFT      = byMint[mint].decimals === 0 && byMint[mint].rawAmount === 1;
         }catch(rowErr){
           console.warn("Token account parse error:", rowErr.message);
         }
       });
 
-      const raw = Object.values(byMint).filter(t=>t.uiAmount>0||t.rawAmount>0);
+      const raw = Object.values(byMint).filter(t => t.uiAmount > 0 || t.rawAmount > 0);
 
-      // Fetch prices and metadata in parallel
+      // ── Step 4: Publish raw tokens immediately so they appear in the UI
+      //    without waiting for price/metadata fetches ──
+      const rawToks = raw.map(t => ({
+        ...t,
+        tokenType: t.isNFT ? "nft" : t.decimals === 0 ? "fungible-no-dec" : "unknown",
+      })).sort((a,b) => (a.symbol||"").localeCompare(b.symbol||""));
+      setSplTokens(rawToks);
+
+      // ── Step 5: Enrich with prices and metadata in parallel ──
+      // Use a short timeout so the UI is never blocked by slow APIs
       const [mintPrices, mintMeta] = await Promise.all([
-        fetchJupiterPricesByMint(raw.map(t=>t.mint)),
-        fetchJupiterTokenMeta(raw.map(t=>t.mint))
+        fetchJupiterPricesByMint(raw.map(t => t.mint)),
+        fetchJupiterTokenMeta(raw.map(t => t.mint)),
       ]);
 
-      const toks = raw.map(t=>{
-        const meta    = mintMeta[t.mint]||{};
-        const known   = KNOWN_MINTS[t.mint]||{};
-        const price   = mintPrices[t.mint]||known.price||0;
-        const logo    = known.logo||meta.logo||null;
-        const symbol  = known.symbol||meta.symbol||t.symbol;
-        const name    = known.name||meta.name||t.name;
-        const decimals= known.decimals??meta.decimals??t.decimals??6;
+      const enrichedToks = raw.map(t => {
+        const meta    = mintMeta[t.mint] || {};
+        const known   = KNOWN_MINTS[t.mint] || {};
+        const price   = mintPrices[t.mint] || known.price || 0;
+        const logo    = known.logo || meta.logo || null;
+        const symbol  = known.symbol || meta.symbol || t.symbol;
+        const name    = known.name   || meta.name   || t.name;
+        const dec     = known.decimals ?? meta.decimals ?? t.decimals ?? 6;
 
-        // Recompute uiAmount with correct decimals from metadata
+        // Recompute uiAmount if metadata gives us better decimals
         let uiAmount = t.uiAmount;
-        if(decimals!==t.decimals && t.rawAmount>0){
-          uiAmount = t.rawAmount / Math.pow(10, decimals);
+        if(dec !== t.decimals && t.rawAmount > 0){
+          uiAmount = t.rawAmount / Math.pow(10, dec);
         }
 
         return {
           ...t,
           uiAmount,
-          balance: uiAmount,
+          balance:   uiAmount,
           price,
           logo,
           symbol,
           name,
-          decimals,
-          // Tag token type for display
+          decimals:  dec,
           tokenType: t.isNFT ? "nft"
-            : decimals===0 ? "fungible-no-dec"
-            : price===0    ? "unknown"
+            : dec === 0      ? "fungible-no-dec"
+            : price === 0    ? "unknown"
             : "fungible",
         };
-      })
-      // Sort: fungible with price first (by USD value desc), then unknown, then NFTs
-      .sort((a,b)=>{
-        const aVal = a.uiAmount*(a.price||0);
-        const bVal = b.uiAmount*(b.price||0);
-        if(bVal!==aVal) return bVal-aVal;
+      }).sort((a,b) => {
+        const aVal = a.uiAmount * (a.price || 0);
+        const bVal = b.uiAmount * (b.price || 0);
+        if(bVal !== aVal) return bVal - aVal;
         return (a.symbol||"").localeCompare(b.symbol||"");
       });
 
-      setSplTokens(toks);
+      // ── Step 6: Replace raw tokens with enriched version ──
+      setSplTokens(enrichedToks);
+
     }catch(e){
-      setWalletError(e.message||"RPC error — check your connection and try again");
+      setWalletError(e.message || "RPC error — check your connection and try again");
       console.error("fetchBalances error:", e);
     }
     setWalletLoading(false);
@@ -1855,11 +1877,11 @@ function App() {
 
       // Calculate amounts
       const tokenAmount = tokAmt;
-      const feeSol = computeFeeSolFromTokenAmount(tokenAmount, tokLive.price, liveSolPrice);
+      const feeSol = computeFeeSolFromTokenAmount(tokenAmount, tok.price, liveSolPrice);
 
       let tx = new window.solanaWeb3.Transaction();
 
-      if(tokLive.symbol==="SOL"){
+      if(tok.symbol==="SOL"){
         // SOL transfer
         const lamports = toLamports(tokenAmount);
         if(lamports<=0) throw new Error("Amount too small.");
@@ -1868,7 +1890,7 @@ function App() {
         }));
       } else {
         // SPL Token transfer
-        const mintAddress = tokLive.mint;
+        const mintAddress = tok.mint;
         if(!mintAddress) throw new Error("Token mint address not found. Please select a token from your wallet.");
 
         const TOKEN_PROGRAM_ID = new window.solanaWeb3.PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
@@ -1907,7 +1929,7 @@ function App() {
         }
 
         // SPL Token transfer instruction
-        const decimals = tokLive.decimals||6;
+        const decimals = tok.decimals||6;
         const rawAmount = Math.floor(tokenAmount * Math.pow(10, decimals));
         if(rawAmount<=0) throw new Error("Amount too small.");
 
@@ -2165,31 +2187,51 @@ function App() {
 
                 {/* Token selector */}
                 <div className="field">
-                  <div className="field-label">Select Token</div>
-                  {walletLoading && !tokLive ? (
-                    <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",background:"rgba(255,255,255,0.04)",border:"1.5px solid var(--border)",borderRadius:11}}>
+                  <div className="field-label">Select Token
+                    {walletLoading && filteredTokens.length > 0 && (
+                      <span style={{marginLeft:8,fontSize:10,color:"var(--text3)",fontWeight:400}}>
+                        <span className="spin" style={{width:10,height:10,borderWidth:1.5,display:"inline-block",verticalAlign:"middle",marginRight:4}}/>
+                        updating…
+                      </span>
+                    )}
+                  </div>
+                  {/* Loading — no tokens yet */}
+                  {walletLoading && filteredTokens.length === 0 ? (
+                    <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",
+                      background:"rgba(255,255,255,0.04)",border:"1.5px solid var(--border)",borderRadius:11}}>
                       <div className="spin"/>
                       <span style={{fontSize:13,color:"var(--text3)"}}>Loading your tokens…</span>
                     </div>
-                  ) : walletError && !tokLive ? (
-                    <div style={{padding:"10px 14px",background:"rgba(248,113,113,0.08)",border:"1px solid rgba(248,113,113,0.25)",borderRadius:11,fontSize:12,color:"var(--red)"}}>
-                      ⚠ Failed to load tokens — <button onClick={()=>fetchBalances(walletPubkey)} style={{background:"none",border:"none",color:"var(--lime)",cursor:"pointer",fontSize:12,fontWeight:600}}>retry</button>
+                  ) : walletError && filteredTokens.length === 0 ? (
+                    <div style={{padding:"10px 14px",background:"rgba(248,113,113,0.08)",
+                      border:"1px solid rgba(248,113,113,0.25)",borderRadius:11,fontSize:12,color:"var(--red)"}}>
+                      ⚠ Failed to load tokens —{" "}
+                      <button onClick={()=>fetchBalances(walletPubkey)}
+                        style={{background:"none",border:"none",color:"var(--lime)",cursor:"pointer",fontSize:12,fontWeight:600}}>
+                        retry
+                      </button>
                     </div>
-                  ) : filteredTokens.length === 0 && !walletLoading ? (
-                    <div style={{padding:"12px 14px",background:"rgba(255,255,255,0.04)",border:"1.5px solid var(--border)",borderRadius:11,fontSize:13,color:"var(--text3)",textAlign:"center"}}>
+                  ) : filteredTokens.length === 0 ? (
+                    <div style={{padding:"12px 14px",background:"rgba(255,255,255,0.04)",
+                      border:"1.5px solid var(--border)",borderRadius:11,fontSize:13,
+                      color:"var(--text3)",textAlign:"center"}}>
                       No tokens found in this wallet
                     </div>
                   ) : (
                     <div className="token-row" onClick={()=>setShowModal(true)}>
                       <div className="tok-left">
-                        {tokLive ? (
+                        {tok ? (
                           <>
-                            <TokenLogo token={tokLive} size={32}/>
+                            <TokenLogo token={tok} size={32}/>
                             <div>
-                              <span className="tok-sym">{tokLive.symbol}</span>
-                              <span style={{fontSize:11,color:"var(--text3)",marginLeft:6}}>
-                                ${tokLive.price<0.000001?tokLive.price.toExponential(2):tokLive.price<0.0001?tokLive.price.toFixed(8):tokLive.price<1?tokLive.price.toFixed(4):tokLive.price.toLocaleString(undefined,{maximumFractionDigits:2})}
-                              </span>
+                              <span className="tok-sym">{tok.symbol}</span>
+                              {tok.price > 0 ? (
+                                <span style={{fontSize:11,color:"var(--text3)",marginLeft:6}}>
+                                  ${tok.price<0.000001?tok.price.toExponential(2):tok.price<0.0001?tok.price.toFixed(8):tok.price<1?tok.price.toFixed(4):tok.price.toLocaleString(undefined,{maximumFractionDigits:2})}
+                                </span>
+                              ) : (
+                                <span style={{fontSize:10,color:"var(--text3)",marginLeft:6}}>fetching price…</span>
+                              )}
                             </div>
                           </>
                         ) : (
@@ -2197,7 +2239,7 @@ function App() {
                         )}
                       </div>
                       <div style={{display:"flex",alignItems:"center",gap:8}}>
-                        {tokLive&&!bulkMode&&<span className="tok-equiv">≈ {dispTok} {tokLive.symbol}</span>}
+                        {tok&&!bulkMode&&tokAmt>0&&<span className="tok-equiv">≈ {dispTok} {tok.symbol}</span>}
                         <span className="tok-chevron">›</span>
                       </div>
                     </div>
@@ -2205,10 +2247,10 @@ function App() {
                 </div>
 
                 {/* Live rate info bar — only when token loaded */}
-                {tokLive&&(
+                {tok&&(
                   <div className="rate-badge" style={{marginBottom:"0.75rem"}}>
                     <span className="rate-dot"/>
-                    1 {tokLive.symbol} = <strong>${tokLive.price<0.0001?tokLive.price.toFixed(8):tokLive.price<1?tokLive.price.toFixed(4):tokLive.price.toLocaleString(undefined,{maximumFractionDigits:2})}</strong> USD
+                    1 {tok.symbol} = <strong>${tok.price<0.0001?tok.price.toFixed(8):tok.price<1?tok.price.toFixed(4):tok.price.toLocaleString(undefined,{maximumFractionDigits:2})}</strong> USD
                     <span className="rate-sep">·</span>
                     1 USD = <strong>{fmtRate(currRate)}</strong> {currency}
                     {liveRates.updatedAt&&<span style={{color:"var(--text3)",fontSize:10}}> · live</span>}
@@ -2217,7 +2259,7 @@ function App() {
 
                 {bulkMode?(
                   <BulkSendPanel
-                    tok={tokLive}
+                    tok={tok}
                     connected={connected}
                     getLiveRate={getLiveCurrRate}
                     onSendBulkFee={handleBulkSendFee}
@@ -2227,28 +2269,28 @@ function App() {
                 ):(
                   <>
                     {/* Amount block */}
-                    {tokLive&&(
+                    {tok&&(
                       <div className="field">
                         <div className="field-label">Amount</div>
                         <AmountInput
                           amount={amount} setAmount={setAmount}
                           inputMode={inputMode} setInputMode={setInputMode}
                           currency={currency} setCurrency={setCurrency}
-                          tok={tokLive}
+                          tok={tok}
                           currRate={currRate}
                         />
                       </div>
                     )}
 
                     {/* Network fee estimate */}
-                    {connected&&tokLive&&num>0&&(
+                    {connected&&tok&&num>0&&(
                       <div style={{fontSize:11,color:"var(--text3)",marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
                         <span>⛽ Est. network fee:</span>
                         <span style={{color:"var(--text2)",fontFamily:"var(--mono)"}}>
-                          ~{(computeFeeSolFromTokenAmount(tokAmt,tokLive.price,liveSolPrice)+0.000005).toFixed(6)} SOL
+                          ~{(computeFeeSolFromTokenAmount(tokAmt,tok.price,liveSolPrice)+0.000005).toFixed(6)} SOL
                           {liveSolPrice>0&&(
                             <span style={{color:"var(--text3)"}}>
-                              {" "}(≈ ${((computeFeeSolFromTokenAmount(tokAmt,tokLive.price,liveSolPrice)+0.000005)*liveSolPrice).toFixed(4)})
+                              {" "}(≈ ${((computeFeeSolFromTokenAmount(tokAmt,tok.price,liveSolPrice)+0.000005)*liveSolPrice).toFixed(4)})
                             </span>
                           )}
                         </span>
@@ -2257,25 +2299,25 @@ function App() {
 
                     <button className="send-btn" disabled={
                       !connected ||
-                      !tokLive ||
+                      !tok ||
                       !recipient ||
                       !num ||
                       sendingFee ||
-                      (tokLive.symbol==="SOL"
+                      (tok.symbol==="SOL"
                         ? (solBalance!==null && tokAmt > solBalance)
-                        : (tokLive.balance!=null && tokAmt > tokLive.balance))
+                        : (tok.balance!=null && tokAmt > tok.balance))
                     } onClick={handleSingleSendFee}>
-                      {!tokLive
+                      {!tok
                         ?"Select a token first"
                         :!recipient
                           ?"Enter a .sol recipient"
-                          :(tokLive.symbol==="SOL" && solBalance!==null && tokAmt>solBalance)
+                          :(tok.symbol==="SOL" && solBalance!==null && tokAmt>solBalance)
                             ?"Insufficient SOL balance"
-                            :(tokLive.balance!=null && tokAmt>tokLive.balance)
-                              ?"Insufficient "+tokLive.symbol+" balance"
+                            :(tok.balance!=null && tokAmt>tok.balance)
+                              ?"Insufficient "+tok.symbol+" balance"
                               :sendingFee
                                 ?"Processing..."
-                                :`Send ${dispTok} ${tokLive.symbol}`
+                                :`Send ${dispTok} ${tok.symbol}`
                       }
                     </button>
                   </>
