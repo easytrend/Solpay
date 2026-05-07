@@ -381,8 +381,8 @@ const FEE_FLAT_SOL = 0.0005; // per recipient
 const LAMPORTS_PER_SOL = 1_000_000_000;
 
 const CURRENCIES = [
-  { code:"NGN", name:"Nigerian Naira",       flag:"🇳🇬", rate:1630 },
-  { code:"USD", name:"US Dollar",            flag:"🇺🇸", rate:1 },
+  { code:"USD", name:"US Dollar",            flag:"��", rate:1 },
+  { code:"NGN", name:"Nigerian Naira",       flag:"��", rate:1630 },
   { code:"EUR", name:"Euro",                 flag:"🇪🇺", rate:0.92 },
   { code:"GBP", name:"British Pound",        flag:"🇬🇧", rate:0.79 },
   { code:"JPY", name:"Japanese Yen",         flag:"🇯🇵", rate:153 },
@@ -746,7 +746,7 @@ function BulkSendPanel({ tok, connected, getLiveRate, onSendBulkFee, sendingFee,
   const [rows,setRows]=React.useState([]);
   const [drag,setDrag]=React.useState(false);
   const [globalAmt,setGlobalAmt]=React.useState("");
-  const [bulkCurr,setBulkCurr]=React.useState("NGN");
+  const [bulkCurr,setBulkCurr]=React.useState("USD");
   const [bulkMode,setBulkMode]=React.useState("fiat");
   const fileRef=React.useRef(null);
 
@@ -952,13 +952,13 @@ function BulkSendPanel({ tok, connected, getLiveRate, onSendBulkFee, sendingFee,
 }
 
 // ── RPC: raw fetch JSON-RPC (bypasses web3.js CORS issues) ──
-// These endpoints are verified to support CORS for browser requests
+// Ordered by reliability for browser CORS requests — public endpoints first
 const RPC_LIST = [
-  "https://solana-mainnet.g.alchemy.com/v2/demo",
+  "https://api.mainnet-beta.solana.com",
   "https://rpc.ankr.com/solana",
   "https://mainnet.helius-rpc.com/?api-key=15319bf8-35b6-4a2c-aa8b-09c1e7f6b5a0",
+  "https://solana-mainnet.g.alchemy.com/v2/demo",
   "https://ssc-dao.genesysgo.net",
-  "https://api.mainnet-beta.solana.com",
 ];
 
 async function rpcFetch(method, params){
@@ -967,20 +967,20 @@ async function rpcFetch(method, params){
     try{
       const r=await fetch(url,{
         method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({jsonrpc:"2.0",id:1,method,params})
+        headers:{"Content-Type":"application/json","Accept":"application/json"},
+        body:JSON.stringify({jsonrpc:"2.0",id:1,method,params}),
+        signal: AbortSignal.timeout(12000),
       });
       if(!r.ok) throw new Error("HTTP "+r.status+" from "+url);
       const j=await r.json();
       if(j.error) throw new Error((j.error.message||JSON.stringify(j.error))+" ["+url+"]");
-      console.log("✅ RPC success via",url);
       return j.result;
     }catch(e){
       console.warn("❌ RPC failed ("+url+"):",e.message);
       errors.push(url.split("/")[2]+": "+e.message);
     }
   }
-  throw new Error("All RPC nodes failed:\n"+errors.join("\n"));
+  throw new Error("All RPC nodes failed. Check your internet connection.\n"+errors.join("\n"));
 }
 const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
@@ -1476,8 +1476,8 @@ function App() {
   const [walletLoading,setWalletLoading]=React.useState(false);
   const [walletError,setWalletError]=React.useState(null);
   const [recipient,setRecipient]=React.useState("");
-  const [amount,setAmount]=React.useState("1000");
-  const [currency,setCurrency]=React.useState("NGN");
+  const [amount,setAmount]=React.useState("");
+  const [currency,setCurrency]=React.useState("USD");
   const [inputMode,setInputMode]=React.useState("fiat");
   const [token,setToken]=React.useState("USDC");
   const [showModal,setShowModal]=React.useState(false);
@@ -1605,7 +1605,16 @@ function App() {
     setWalletLoading(true);setWalletError(null);
     try{
       // ── Step 1: SOL balance — fast, unblocks the token selector immediately ──
-      const balRes=await rpcFetch("getBalance",[pubkey,{commitment:"confirmed"}]);
+      // Retry once on failure before surfacing an error to the user
+      let balRes;
+      try{
+        balRes = await rpcFetch("getBalance",[pubkey,{commitment:"confirmed"}]);
+      }catch(firstErr){
+        console.warn("SOL balance first attempt failed, retrying…", firstErr.message);
+        // Brief pause then retry — handles transient RPC hiccups
+        await new Promise(r=>setTimeout(r,1500));
+        balRes = await rpcFetch("getBalance",[pubkey,{commitment:"confirmed"}]);
+      }
       const solBal = balRes.value/1e9;
       setSolBalance(solBal);
       // walletLoading stays true — spinner shows while SPL tokens load
