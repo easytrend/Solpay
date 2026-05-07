@@ -8,7 +8,6 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@solana/web3.js@1.95.3/lib/index.iife.min.js"></script>
 <script>
 // Buffer polyfill for browser
@@ -291,18 +290,7 @@ nav {
 .di-code { font-weight:700; min-width:44px; font-size:13px; }
 .di-name { font-size:12px; color:var(--text2); margin-left:auto; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:120px; }
 
-/* QR */
-.qr-wrap { background:rgba(255,255,255,0.04); border:1px solid var(--border); border-radius:16px; padding:1.75rem 1.5rem; display:flex; flex-direction:column; align-items:center; gap:14px; }
-.qr-box { background:#fff; border-radius:12px; padding:12px; }
-.qr-domain { font-size:17px; font-weight:700; color:var(--text); font-family:var(--mono); }
-.qr-label { font-size:12px; color:var(--text3); }
-.copy-btn { background:rgba(163,230,53,0.1); border:1px solid rgba(163,230,53,0.25); border-radius:9px; padding:7px 16px; font-size:12px; font-weight:600; color:var(--lime); cursor:pointer; font-family:var(--ff); transition:all 0.15s; }
-.copy-btn:hover { background:rgba(163,230,53,0.18); }
-.copy-ok { color:var(--green); border-color:rgba(74,222,128,0.35); }
-.no-wallet { text-align:center; padding:2.5rem 1rem; }
-.no-wallet-icon { font-size:36px; margin-bottom:14px; }
-.no-wallet-title { font-size:15px; font-weight:600; color:var(--text); margin-bottom:6px; }
-.no-wallet-sub { font-size:13px; color:var(--text2); }
+
 
 /* TOKEN MODAL */
 .modal-overlay { position:fixed; inset:0; z-index:400; background:rgba(5,12,28,0.8); display:flex; align-items:flex-end; justify-content:center; }
@@ -371,32 +359,7 @@ footer a { color:var(--lime); text-decoration:none; }
 ::-webkit-scrollbar-track { background:transparent; }
 ::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1); border-radius:4px; }
 
-/* WALLET TOKENS PANEL */
-.wt-panel{display:flex;flex-direction:column;gap:10px;padding-top:4px}
-.wt-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
-.wt-title{font-size:1.3rem;font-weight:700}
-.wt-addr{font-size:11px;color:var(--text3);font-family:var(--mono);background:rgba(255,255,255,0.05);border-radius:8px;padding:5px 10px;margin-bottom:10px;word-break:break-all}
-.wt-sol-card{background:linear-gradient(135deg,rgba(153,69,255,0.18),rgba(34,211,238,0.08));border:1px solid rgba(153,69,255,0.35);border-radius:14px;padding:16px 18px;display:flex;align-items:center;gap:14px;margin-bottom:4px}
-.wt-sol-icon{width:42px;height:42px;border-radius:50%;background:rgba(153,69,255,0.22);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
-.wt-sol-bal{font-size:1.4rem;font-weight:700;font-family:var(--mono)}
-.wt-sol-usd{font-size:12px;color:var(--text2);margin-top:2px}
-.wt-tokens-list{display:flex;flex-direction:column;gap:6px}
-.wt-tok-row{display:flex;align-items:center;gap:12px;padding:10px 14px;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:12px}
-.wt-tok-info{flex:1}
-.wt-tok-sym{font-size:13px;font-weight:600}
-.wt-tok-name{font-size:11px;color:var(--text3)}
-.wt-tok-bal{font-size:13px;font-weight:600;font-family:var(--mono);color:var(--lime)}
-.wt-tok-usd{font-size:11px;color:var(--text2);font-family:var(--mono)}
-.wt-empty{text-align:center;padding:2rem 1rem;color:var(--text3);font-size:13px}
-.wt-refresh{background:rgba(163,230,53,0.09);border:1px solid rgba(163,230,53,0.28);border-radius:9px;padding:6px 14px;font-size:12px;font-weight:600;color:var(--lime);cursor:pointer;font-family:var(--ff);transition:all 0.2s}
-.wt-refresh:hover{background:rgba(163,230,53,0.18)}
-.wt-refresh:disabled{opacity:0.5;cursor:not-allowed}
-.wt-loading{display:flex;align-items:center;justify-content:center;padding:2rem;gap:10px;color:var(--text3);font-size:13px}
-.spin{width:18px;height:18px;border:2px solid rgba(255,255,255,0.1);border-top-color:var(--lime);border-radius:50%;animation:spin 0.8s linear infinite;flex-shrink:0}
-@keyframes spin{to{transform:rotate(360deg)}}
-.wt-error{background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.25);border-radius:10px;padding:10px 14px;font-size:12px;color:var(--red);margin-bottom:8px}
-.nav-addr{font-size:11px;font-family:var(--mono);color:var(--text2);background:rgba(255,255,255,0.05);border-radius:8px;padding:4px 10px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.wt-section-lbl{font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em;margin-top:4px}
+
 
 /* PROGRESS BAR */
 .bulk-progress-bar { height:6px; background:rgba(255,255,255,0.08); border-radius:3px; overflow:hidden; }
@@ -731,18 +694,6 @@ function CurrDrop({ selected, onSelect, showAsRow=false, rateLabel="" }) {
   );
 }
 
-// ── QR ──
-function QRGen({domain}) {
-  const ref=React.useRef(null);
-  React.useEffect(()=>{
-    if(!ref.current) return;
-    ref.current.innerHTML="";
-    try { new window.QRCode(ref.current,{text:`solana:${domain}?label=${domain}`,width:180,height:180,colorDark:"#000",colorLight:"#fff",correctLevel:window.QRCode.CorrectLevel.H}); }
-    catch(e){ref.current.innerHTML='<div style="width:180px;height:180px;background:#eee;display:flex;align-items:center;justify-content:center;font-size:12px;color:#666">QR unavailable</div>';}
-  },[domain]);
-  return <div ref={ref}/>;
-}
-
 // ── Amount Input Block (fiat ↔ crypto toggle) ──
 function AmountInput({ amount, setAmount, inputMode, setInputMode, currency, setCurrency, tok, currRate }) {
   const curr = CURRENCIES.find(c=>c.code===currency)||CURRENCIES[0];
@@ -798,6 +749,21 @@ function BulkSendPanel({ tok, connected, getLiveRate, onSendBulkFee, sendingFee,
   const [bulkCurr,setBulkCurr]=React.useState("NGN");
   const [bulkMode,setBulkMode]=React.useState("fiat");
   const fileRef=React.useRef(null);
+
+  // Guard: if no token selected, show message
+  if(!tok) {
+    return (
+      <div style={{textAlign:"center",padding:"2rem 1rem"}}>
+        <div style={{fontSize:36,marginBottom:12}}>🪙</div>
+        <div style={{fontSize:14,fontWeight:600,color:"var(--text)",marginBottom:6}}>
+          Select a token first
+        </div>
+        <div style={{fontSize:12,color:"var(--text3)"}}>
+          Choose a token from the dropdown above to continue with bulk send.
+        </div>
+      </div>
+    );
+  }
 
   // Always use live rate
   const staticCurr=CURRENCIES.find(c=>c.code===bulkCurr)||CURRENCIES[0];
@@ -1085,75 +1051,6 @@ function readUiTokenAmount(tokenAmount){
   return amt/Math.pow(10,dec);
 }
 
-// ── Wallet Tokens Panel Component ──
-function WalletTokensPanel({walletPubkey,solBalance,splTokens,loading,error,onRefresh,solPrice}){
-  const SOL_PRICE=solPrice||148.5;
-  if(!walletPubkey) return (
-    <div className="no-wallet">
-      <div className="no-wallet-icon">🔐</div>
-      <div className="no-wallet-title">Connect your wallet</div>
-      <div className="no-wallet-sub">Connect Phantom or Solflare to view your on-chain token balances.</div>
-    </div>
-  );
-  return (
-    <div className="wt-panel">
-      <div className="wt-header">
-        <div className="wt-title">My Wallet</div>
-        <button className="wt-refresh" onClick={onRefresh} disabled={loading}>{loading?"Refreshing…":"⟳ Refresh"}</button>
-      </div>
-      <div className="wt-addr">{walletPubkey}</div>
-      {error&&<div className="wt-error">⚠ {error}</div>}
-      {loading?(
-        <div className="wt-loading"><div className="spin"/><span>Fetching balances from Solana…</span></div>
-      ):(
-        <>
-          <div className="wt-sol-card">
-            <div className="wt-sol-icon">
-              <img src="https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png" alt="SOL" style={{width:28,height:28,borderRadius:"50%"}} onError={e=>{e.target.style.display="none";e.target.nextSibling.style.display="block";}} />
-              <span style={{display:"none"}}>◎</span>
-            </div>
-            <div>
-              <div className="wt-sol-bal">{solBalance!==null?solBalance.toFixed(5):"—"} SOL</div>
-              <div className="wt-sol-usd">{solBalance!==null?`≈ $${(solBalance*SOL_PRICE).toFixed(2)} USD`:""}</div>
-            </div>
-          </div>
-          <div className="wt-section-lbl">SPL Tokens</div>
-          {splTokens.length===0?(
-            <div className="wt-empty">No SPL token balances found in this wallet.</div>
-          ):(
-            <div className="wt-tokens-list">
-              {splTokens.map((t,i)=>{
-                const td=TOKENS.find(x=>x.symbol===t.symbol)||{};
-                return (
-                  <div key={i} className="wt-tok-row">
-                    <div style={{position:"relative",width:36,height:36,flexShrink:0}}>
-                      <img
-                        src={t.logo||td.logo||`https://img.jup.ag/tokens/${t.mint||t.symbol}`}
-                        alt={t.symbol}
-                        style={{width:36,height:36,borderRadius:"50%",objectFit:"cover"}}
-                        onError={e=>{e.target.style.display="none";e.target.nextSibling.style.display="flex";}}
-                      />
-                      <div className="tok-icon" style={{background:td.bg||"rgba(255,255,255,0.08)",color:td.color||"#ccc",width:36,height:36,fontSize:10,display:"none",position:"absolute",top:0,left:0}}>{(t.symbol||"?").slice(0,4)}</div>
-                    </div>
-                    <div className="wt-tok-info">
-                      <div className="wt-tok-sym">{t.symbol||"Unknown"}</div>
-                      <div className="wt-tok-name">{t.name||t.mint.slice(0,12)+"…"}</div>
-                    </div>
-                    <div style={{textAlign:"right"}}>
-                      <div className="wt-tok-bal">{t.uiAmount.toLocaleString(undefined,{maximumFractionDigits:4})}</div>
-                      {t.price&&<div className="wt-tok-usd">${(t.uiAmount*t.price).toFixed(2)}</div>}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
 // ── SNS Domain Resolution ──
 function isValidSolanaAddress(address){
   try{
@@ -1197,6 +1094,40 @@ async function resolveSNSDomain(domain){
     console.error('SNS resolution failed:',e);
     throw new Error('Could not resolve .sol domain');
   }
+}
+
+// ── Token Logo with fallback ──
+function TokenLogo({token, size=36}) {
+  const [imgFailed, setImgFailed] = React.useState(false);
+  const t = token || {};
+  const sz = size;
+  const logoSrc = t.logo || (t.mint ? `https://img.jup.ag/tokens/${t.mint}` : null);
+
+  if(!imgFailed && logoSrc) {
+    return (
+      <div style={{position:"relative",width:sz,height:sz,flexShrink:0}}>
+        <img
+          src={logoSrc}
+          alt={t.symbol||"token"}
+          style={{width:sz,height:sz,borderRadius:"50%",objectFit:"cover",display:"block"}}
+          onError={()=>setImgFailed(true)}
+        />
+      </div>
+    );
+  }
+  // Fallback: colored circle with symbol initials
+  return (
+    <div className="tok-icon" style={{
+      background:t.bg||"rgba(255,255,255,0.1)",
+      color:t.color||"#ccc",
+      width:sz, height:sz,
+      fontSize:Math.max(8, Math.floor(sz*0.28)),
+      flexShrink:0,
+      border:"1px solid rgba(255,255,255,0.12)"
+    }}>
+      {(t.symbol||"?").slice(0,4)}
+    </div>
+  );
 }
 
 // ── Wallet Select Modal — real-time detection, persistence ──
@@ -1299,39 +1230,6 @@ function WalletSelectModal({onClose, onSelect}) {
   );
 }
 
-// ── Receive Panel ──
-function ReceivePanel({walletPubkey}){
-  const [copied,setCopied]=React.useState(false);
-  const copyAddress=()=>{
-    navigator.clipboard.writeText(walletPubkey);
-    setCopied(true);
-    setTimeout(()=>setCopied(false),2000);
-  };
-  if(!walletPubkey){
-    return (
-      <div className="no-wallet">
-        <div className="no-wallet-icon">🔐</div>
-        <div className="no-wallet-title">Connect your wallet</div>
-        <div className="no-wallet-sub">Connect to view your receive address and QR code</div>
-      </div>
-    );
-  }
-  return (
-    <div>
-      <div className="card-title">Receive Crypto</div>
-      <p className="card-sub">Share your wallet address or QR code to receive payments</p>
-      <div className="qr-wrap">
-        <QRGen domain={walletPubkey}/>
-        <div className="qr-domain">{walletPubkey.slice(0,8)}...{walletPubkey.slice(-8)}</div>
-        <div className="qr-label">Your Solana Wallet Address</div>
-        <button className={`copy-btn ${copied?"copy-ok":""}`} onClick={copyAddress}>
-          {copied?"✓ Copied!":"📋 Copy Address"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
 // ── Toast Notification ──
 function Toast({message,type,link,linkLabel,onClose}){
   React.useEffect(()=>{
@@ -1368,7 +1266,6 @@ function App() {
   const [bulkMode,setBulkMode]=React.useState(false);
   const [connected,setConnected]=React.useState(false);
   const [walletPubkey,setWalletPubkey]=React.useState(null);
-  const [activeTab,setActiveTab]=React.useState("send");
   const [showWalletSelect,setShowWalletSelect]=React.useState(false);
   const [solBalance,setSolBalance]=React.useState(null);
   const [splTokens,setSplTokens]=React.useState([]);
@@ -1401,7 +1298,16 @@ function App() {
     return()=>clearInterval(id);
   },[]);
 
-  // Resolve live fiat rate (fall back to static)
+  // Auto-select first held token once balances load
+  React.useEffect(()=>{
+    if(!connected || walletLoading) return;
+    if(filteredTokens.length===0) return;
+    // If current selection isn't in the wallet, pick the first held token
+    const currentInWallet = filteredTokens.find(t=>(t.symbol||"").toUpperCase()===token.toUpperCase());
+    if(!currentInWallet) {
+      setToken(filteredTokens[0].symbol);
+    }
+  },[connected, walletLoading, filteredTokens]);
   function getLiveCurrRate(code){
     const staticC=CURRENCIES.find(c=>c.code===code)||CURRENCIES[0];
     return liveRates.fiat[code]||staticC.rate;
@@ -1420,10 +1326,12 @@ function App() {
   // Build token list as soon as wallet is connected — don't wait for RPC balance
   const liveSolPrice = liveRates.crypto["SOL"]||148.5;
   const walletTokenList = React.useMemo(()=>{
-    if(!connected) return null; // only gate on connection, not balance
-    const solEntry={symbol:"SOL",name:"Solana",color:"#9945FF",bg:"#2d1a4e",
-      price:liveRates.crypto["SOL"]||148.5,
-      balance:solBalance // may be null while loading — handled in modal
+    if(!connected) return null;
+    const solEntry={
+      symbol:"SOL", name:"Solana", color:"#9945FF", bg:"#2d1a4e",
+      price: liveRates.crypto["SOL"]||148.5,
+      balance: solBalance, // null while loading
+      logo:"https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png"
     };
     const splEntries=splTokens.map(t=>{
       const meta=findTokenMeta(t.symbol)||{color:"#aaa",bg:"rgba(255,255,255,0.08)"};
@@ -1433,42 +1341,46 @@ function App() {
     return[solEntry,...splEntries];
   },[connected,solBalance,splTokens,liveRates]);
 
-  // Token list: alphabetically sorted, searchable by symbol/name/mint address
+  // Token list: only show held tokens when connected, alphabetically sorted
   const filteredTokens = React.useMemo(()=>{
+    // Before wallet connection: show nothing
+    if(!connected || !walletTokenList) return [];
+    
     const q = tokenQ.toLowerCase().trim();
-    const list = connected
-      ? (walletTokenList||[]).filter(t=>t.symbol==="SOL"||t.balance==null||t.balance>0).map(t=>{
-          const meta=findTokenMeta(t.symbol)||{};
-          return {...meta,...t,price:t.price||getLiveTokPrice(t.symbol)||meta.price||0};
-        })
-      : TOKENS.map(t=>({...t,price:getLiveTokPrice(t.symbol)||t.price||0}));
+    // Only show tokens with balance > 0 (SOL always included if balance loaded)
+    const heldTokens = walletTokenList.filter(t => {
+      if(t.symbol === "SOL") return solBalance !== null; // SOL shown if balance loaded
+      return t.balance != null && t.balance > 0; // SPL tokens only if balance > 0
+    });
+    
     const filtered = q
-      ? list.filter(t=>
+      ? heldTokens.filter(t=>
           (t.symbol||"").toLowerCase().includes(q) ||
           (t.name||"").toLowerCase().includes(q) ||
-          (t.mint||"").toLowerCase().includes(q)   // contract address search
+          (t.mint||"").toLowerCase().includes(q)
         )
-      : list;
+      : heldTokens;
+    
     // Alphabetical sort by symbol
     return [...filtered].sort((a,b)=>(a.symbol||"").localeCompare(b.symbol||""));
-  },[connected, walletTokenList, liveRates, tokenQ]);
+  },[connected, walletTokenList, solBalance, tokenQ]);
 
-  // Find selected token — check wallet list first, then static
-  const tok = (walletTokenList&&walletTokenList.find(t=>(t.symbol||"").toUpperCase()===token.toUpperCase()))
-    || findTokenMeta(token)
-    || TOKENS[1];
+  // Find selected token — only from wallet list when connected
+  const tok = connected && walletTokenList
+    ? (walletTokenList.find(t=>(t.symbol||"").toUpperCase()===token.toUpperCase()) || walletTokenList[0])
+    : null;
 
   const curr=CURRENCIES.find(c=>c.code===currency)||CURRENCIES[0];
   // Override with live rates
   const currRate = getLiveCurrRate(currency);
-  const tokPrice = tok.price||getLiveTokPrice(tok.symbol)||1;
+  const tokPrice = tok ? (tok.price||getLiveTokPrice(tok.symbol)||0) : 0;
   const num=parseFloat(amount)||0;
-  const tokAmt=inputMode==="fiat"?(num/currRate)/tokPrice:num;
-  const fiatAmt=inputMode==="crypto"?num*tokPrice*currRate:num;
+  const tokAmt=tok ? (inputMode==="fiat"?(num/currRate)/tokPrice:num) : 0;
+  const fiatAmt=tok ? (inputMode==="crypto"?num*tokPrice*currRate:num) : 0;
   const dispTok=fmtTok(tokAmt);
   // Patch curr and tok with live values for child components
   const currLive={...curr,rate:currRate};
-  const tokLive={...tok,price:tokPrice};
+  const tokLive=tok ? {...tok,price:tokPrice} : null;
 
 
 
@@ -1571,6 +1483,7 @@ function App() {
 
   function disconnectWallet(){
     setConnected(false);setWalletPubkey(null);setSolBalance(null);setSplTokens([]);setWalletError(null);
+    setToken("USDC"); // reset token selection
     try{ localStorage.removeItem(WALLET_STORAGE_KEY); }catch(_){}
     try{const p=window.phantom?.solana||window.solana||window.solflare;if(p)p.disconnect();}catch(e){}
   }
@@ -1912,15 +1825,26 @@ function App() {
       <div className="main">
         <div className="app-card">
           <div className="card-body">
-            {/* Tab Navigation */}
+            {/* Tab Navigation — Send only */}
             <div className="tabs" style={{marginBottom:"1.2rem"}}>
-              <button className={`tab-btn ${activeTab==="send"?"active":""}`} onClick={()=>setActiveTab("send")}>Send</button>
-              <button className={`tab-btn ${activeTab==="receive"?"active":""}`} onClick={()=>setActiveTab("receive")}>Receive</button>
-              <button className={`tab-btn ${activeTab==="wallet"?"active":""}`} onClick={()=>setActiveTab("wallet")}>💼 Wallet</button>
+              <button className="tab-btn active">Send</button>
             </div>
 
-            {/* Send Tab */}
-            {activeTab==="send"&&(
+            {/* ── PRE-CONNECTION GATE ── */}
+            {!connected ? (
+              <div style={{textAlign:"center",padding:"2.5rem 1rem"}}>
+                <div style={{fontSize:48,marginBottom:16}}>🔐</div>
+                <div style={{fontSize:17,fontWeight:700,color:"var(--text)",marginBottom:8}}>
+                  Connect your wallet to continue
+                </div>
+                <div style={{fontSize:13,color:"var(--text2)",marginBottom:24,lineHeight:1.6}}>
+                  Your token balances and prices will appear here after connecting.
+                </div>
+                <button className="send-btn" style={{maxWidth:220,margin:"0 auto"}} onClick={connectWallet}>
+                  Connect Wallet
+                </button>
+              </div>
+            ) : (
             <div>
                 {/* Title + bulk toggle inline */}
                 <div className="title-row">
@@ -1938,45 +1862,62 @@ function App() {
                     <div className="field-label">Send To</div>
                     <div className="input-wrap">
                       <span className="sol-icon">◎</span>
-                      <input value={recipient} onChange={e=>setRecipient(e.target.value)} placeholder="example.sol"/>
+                      <input value={recipient} onChange={e=>setRecipient(e.target.value)} placeholder="example.sol or wallet address"/>
                     </div>
                   </div>
                 )}
 
-                {/* Token selector — shared */}
+                {/* Token selector */}
                 <div className="field">
                   <div className="field-label">Select Token</div>
-                  <div className="token-row" onClick={()=>setShowModal(true)}>
-                    <div className="tok-left">
-                      <div style={{position:"relative",width:32,height:32,flexShrink:0}}>
-                        <img
-                          src={tokLive.logo||`https://img.jup.ag/tokens/${tokLive.mint||tokLive.symbol}`}
-                          alt={tokLive.symbol}
-                          style={{width:32,height:32,borderRadius:"50%",objectFit:"cover"}}
-                          onError={e=>{e.target.style.display="none";e.target.nextSibling.style.display="flex";}}
-                        />
-                        <div className="tok-icon" style={{background:tokLive.bg,color:tokLive.color,width:32,height:32,display:"none",position:"absolute",top:0,left:0,fontSize:9}}>{tokLive.symbol.slice(0,4)}</div>
+                  {walletLoading && !tokLive ? (
+                    <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",background:"rgba(255,255,255,0.04)",border:"1.5px solid var(--border)",borderRadius:11}}>
+                      <div className="spin"/>
+                      <span style={{fontSize:13,color:"var(--text3)"}}>Loading your tokens…</span>
+                    </div>
+                  ) : walletError && !tokLive ? (
+                    <div style={{padding:"10px 14px",background:"rgba(248,113,113,0.08)",border:"1px solid rgba(248,113,113,0.25)",borderRadius:11,fontSize:12,color:"var(--red)"}}>
+                      ⚠ Failed to load tokens — <button onClick={()=>fetchBalances(walletPubkey)} style={{background:"none",border:"none",color:"var(--lime)",cursor:"pointer",fontSize:12,fontWeight:600}}>retry</button>
+                    </div>
+                  ) : filteredTokens.length === 0 && !walletLoading ? (
+                    <div style={{padding:"12px 14px",background:"rgba(255,255,255,0.04)",border:"1.5px solid var(--border)",borderRadius:11,fontSize:13,color:"var(--text3)",textAlign:"center"}}>
+                      No tokens found in this wallet
+                    </div>
+                  ) : (
+                    <div className="token-row" onClick={()=>setShowModal(true)}>
+                      <div className="tok-left">
+                        {tokLive ? (
+                          <>
+                            <TokenLogo token={tokLive} size={32}/>
+                            <div>
+                              <span className="tok-sym">{tokLive.symbol}</span>
+                              <span style={{fontSize:11,color:"var(--text3)",marginLeft:6}}>
+                                ${tokLive.price<0.000001?tokLive.price.toExponential(2):tokLive.price<0.0001?tokLive.price.toFixed(8):tokLive.price<1?tokLive.price.toFixed(4):tokLive.price.toLocaleString(undefined,{maximumFractionDigits:2})}
+                              </span>
+                            </div>
+                          </>
+                        ) : (
+                          <span style={{fontSize:13,color:"var(--text3)"}}>Select a token</span>
+                        )}
                       </div>
-                      <div>
-                        <span className="tok-sym">{tokLive.symbol}</span>
-                        <span style={{fontSize:11,color:"var(--text3)",marginLeft:6}}>${tokLive.price<0.01?tokLive.price.toFixed(6):tokLive.price.toLocaleString()}</span>
+                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        {tokLive&&!bulkMode&&<span className="tok-equiv">≈ {dispTok} {tokLive.symbol}</span>}
+                        <span className="tok-chevron">›</span>
                       </div>
                     </div>
-                    <div style={{display:"flex",alignItems:"center",gap:8}}>
-                      {!bulkMode&&<span className="tok-equiv">≈ {dispTok} {tokLive.symbol}</span>}
-                      <span className="tok-chevron">›</span>
-                    </div>
-                  </div>
+                  )}
                 </div>
 
-                {/* Live rate info bar */}
-                <div className="rate-badge" style={{marginBottom:"0.75rem"}}>
-                  <span className="rate-dot"/>
-                  1 {tokLive.symbol} = <strong>${tokLive.price<0.0001?tokLive.price.toFixed(8):tokLive.price<1?tokLive.price.toFixed(4):tokLive.price.toLocaleString()}</strong> USD
-                  <span className="rate-sep">·</span>
-                  1 USD = <strong>{fmtRate(currRate)}</strong> {currency}
-                  {liveRates.updatedAt&&<span style={{color:"var(--text3)",fontSize:10}}> · live</span>}
-                </div>
+                {/* Live rate info bar — only when token loaded */}
+                {tokLive&&(
+                  <div className="rate-badge" style={{marginBottom:"0.75rem"}}>
+                    <span className="rate-dot"/>
+                    1 {tokLive.symbol} = <strong>${tokLive.price<0.0001?tokLive.price.toFixed(8):tokLive.price<1?tokLive.price.toFixed(4):tokLive.price.toLocaleString(undefined,{maximumFractionDigits:2})}</strong> USD
+                    <span className="rate-sep">·</span>
+                    1 USD = <strong>{fmtRate(currRate)}</strong> {currency}
+                    {liveRates.updatedAt&&<span style={{color:"var(--text3)",fontSize:10}}> · live</span>}
+                  </div>
+                )}
 
                 {bulkMode?(
                   <BulkSendPanel
@@ -1990,19 +1931,21 @@ function App() {
                 ):(
                   <>
                     {/* Amount block */}
-                    <div className="field">
-                      <div className="field-label">Amount</div>
-                      <AmountInput
-                        amount={amount} setAmount={setAmount}
-                        inputMode={inputMode} setInputMode={setInputMode}
-                        currency={currency} setCurrency={setCurrency}
-                        tok={tokLive}
-                        currRate={currRate}
-                      />
-                    </div>
+                    {tokLive&&(
+                      <div className="field">
+                        <div className="field-label">Amount</div>
+                        <AmountInput
+                          amount={amount} setAmount={setAmount}
+                          inputMode={inputMode} setInputMode={setInputMode}
+                          currency={currency} setCurrency={setCurrency}
+                          tok={tokLive}
+                          currRate={currRate}
+                        />
+                      </div>
+                    )}
 
                     {/* Network fee estimate */}
-                    {connected&&num>0&&(
+                    {connected&&tokLive&&num>0&&(
                       <div style={{fontSize:11,color:"var(--text3)",marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
                         <span>⛽ Est. network fee:</span>
                         <span style={{color:"var(--text2)",fontFamily:"var(--mono)"}}>
@@ -2015,18 +1958,19 @@ function App() {
                         </span>
                       </div>
                     )}
+
                     <button className="send-btn" disabled={
                       !connected ||
+                      !tokLive ||
                       !recipient ||
                       !num ||
                       sendingFee ||
-                      // Disable if amount exceeds balance
                       (tokLive.symbol==="SOL"
                         ? (solBalance!==null && tokAmt > solBalance)
                         : (tokLive.balance!=null && tokAmt > tokLive.balance))
                     } onClick={handleSingleSendFee}>
-                      {!connected
-                        ?"Connect wallet to send"
+                      {!tokLive
+                        ?"Select a token first"
                         :!recipient
                           ?"Enter a .sol recipient"
                           :(tokLive.symbol==="SOL" && solBalance!==null && tokAmt>solBalance)
@@ -2041,24 +1985,6 @@ function App() {
                   </>
                 )}
               </div>
-            )}
-
-            {/* Receive Tab */}
-            {activeTab==="receive"&&(
-              <ReceivePanel walletPubkey={walletPubkey}/>
-            )}
-
-            {/* Wallet Tab */}
-            {activeTab==="wallet"&&(
-              <WalletTokensPanel
-                walletPubkey={walletPubkey}
-                solBalance={solBalance}
-                splTokens={splTokens}
-                loading={walletLoading}
-                error={walletError}
-                onRefresh={()=>walletPubkey&&fetchBalances(walletPubkey)}
-                solPrice={liveSolPrice}
-              />
             )}
           </div>
         </div>
@@ -2097,57 +2023,86 @@ function App() {
               <span className="modal-title">Select Token</span>
               <button className="modal-close" onClick={()=>setShowModal(false)}>✕</button>
             </div>
-            {connected&&solBalance!==null&&(
-              <div style={{fontSize:11,color:"var(--lime)",marginBottom:8,padding:"0 2px",fontWeight:600}}>
-                ✓ Showing tokens available in your connected wallet
+
+            {/* Loading state */}
+            {walletLoading&&filteredTokens.length===0&&(
+              <div style={{padding:"2rem",textAlign:"center"}}>
+                <div className="spin" style={{margin:"0 auto 12px"}}/>
+                <div style={{fontSize:13,color:"var(--text3)"}}>Loading your tokens…</div>
               </div>
             )}
-            {connected&&walletLoading&&(
-              <div style={{fontSize:11,color:"var(--text3)",marginBottom:8,padding:"0 2px"}}>
-                ⟳ Fetching your wallet balances…
+
+            {/* Error state */}
+            {walletError&&filteredTokens.length===0&&!walletLoading&&(
+              <div style={{padding:"1.5rem",textAlign:"center"}}>
+                <div style={{fontSize:36,marginBottom:12}}>⚠️</div>
+                <div style={{fontSize:14,fontWeight:600,color:"var(--text)",marginBottom:6}}>
+                  Failed to load tokens
+                </div>
+                <div style={{fontSize:12,color:"var(--text3)",marginBottom:16}}>
+                  {walletError}
+                </div>
+                <button className="send-btn" style={{maxWidth:180,margin:"0 auto",padding:"10px 20px",fontSize:13}}
+                  onClick={()=>{setShowModal(false);fetchBalances(walletPubkey);}}>
+                  Retry
+                </button>
               </div>
             )}
-            <input className="modal-search" autoFocus placeholder="Search by name, symbol or address…" value={tokenQ} onChange={e=>setTokenQ(e.target.value)}/>
-            {filteredTokens.length===0&&(
-              <div style={{textAlign:"center",padding:"1.5rem",color:"var(--text3)",fontSize:13}}>No tokens found</div>
-            )}
-            {filteredTokens.map(t=>(
-              <div key={t.mint||t.symbol} className="modal-item" onClick={()=>{setToken(t.symbol);setShowModal(false);setTokenQ("");}}>
-                <div style={{position:"relative",width:36,height:36,flexShrink:0}}>
-                  <img
-                    src={t.logo||`https://img.jup.ag/tokens/${t.mint||t.symbol}`}
-                    alt={t.symbol}
-                    style={{width:36,height:36,borderRadius:"50%",objectFit:"cover"}}
-                    onError={e=>{e.target.style.display="none";e.target.nextSibling.style.display="flex";}}
-                  />
-                  <div className="tok-icon" style={{background:t.bg||"rgba(255,255,255,0.08)",color:t.color||"#ccc",width:36,height:36,fontSize:10,display:"none",position:"absolute",top:0,left:0}}>{(t.symbol||"").slice(0,4)}</div>
+
+            {/* Empty state */}
+            {!walletLoading&&!walletError&&filteredTokens.length===0&&(
+              <div style={{padding:"2rem",textAlign:"center"}}>
+                <div style={{fontSize:36,marginBottom:12}}>💰</div>
+                <div style={{fontSize:14,fontWeight:600,color:"var(--text)",marginBottom:6}}>
+                  No tokens found
                 </div>
-                <div style={{flex:1,minWidth:0}}>
-                  <div className="m-name">{t.symbol}</div>
-                  <div className="m-full" style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:140}}>{t.name}</div>
-                </div>
-                <div style={{marginLeft:"auto",textAlign:"right",minWidth:100,flexShrink:0}}>
-                  {/* USD price per 1 token */}
-                  {t.price>0&&(
-                    <div className="m-price" style={{fontSize:12,fontWeight:600}}>
-                      ${t.price<0.000001?t.price.toExponential(2):t.price<0.0001?t.price.toFixed(8):t.price<1?t.price.toFixed(4):t.price.toLocaleString(undefined,{maximumFractionDigits:2})}
-                    </div>
-                  )}
-                  {/* Balance: 6 significant digits */}
-                  {t.balance!=null&&(
-                    <div style={{fontSize:10,color:"var(--lime)",fontFamily:"var(--mono)",marginTop:2,fontWeight:600}}>
-                      {Number(t.balance.toPrecision(6)).toLocaleString(undefined,{maximumSignificantDigits:6})} held
-                    </div>
-                  )}
-                  {/* USD value of held balance */}
-                  {t.balance!=null&&t.price>0&&(
-                    <div style={{fontSize:10,color:"var(--text3)",fontFamily:"var(--mono)"}}>
-                      ≈ ${(t.balance*t.price).toLocaleString(undefined,{maximumFractionDigits:2})}
-                    </div>
-                  )}
+                <div style={{fontSize:12,color:"var(--text3)"}}>
+                  This wallet doesn't hold any tokens yet.
                 </div>
               </div>
-            ))}
+            )}
+
+            {/* Token list */}
+            {filteredTokens.length>0&&(
+              <>
+                <input className="modal-search" autoFocus placeholder="Search by name, symbol or address…"
+                  value={tokenQ} onChange={e=>setTokenQ(e.target.value)}/>
+                {filteredTokens.map(t=>(
+                  <div key={t.mint||t.symbol} className="modal-item"
+                    onClick={()=>{setToken(t.symbol);setShowModal(false);setTokenQ("");}}>
+                    <TokenLogo token={t} size={36}/>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div className="m-name">{t.symbol}</div>
+                      <div className="m-full" style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:140}}>
+                        {t.name}
+                      </div>
+                    </div>
+                    <div style={{marginLeft:"auto",textAlign:"right",minWidth:100,flexShrink:0}}>
+                      {/* USD price per 1 token */}
+                      {t.price>0 ? (
+                        <div className="m-price" style={{fontSize:12,fontWeight:600}}>
+                          ${t.price<0.000001?t.price.toExponential(2):t.price<0.0001?t.price.toFixed(8):t.price<1?t.price.toFixed(4):t.price.toLocaleString(undefined,{maximumFractionDigits:2})}
+                        </div>
+                      ) : (
+                        <div style={{fontSize:11,color:"var(--text3)"}}>Price unavailable</div>
+                      )}
+                      {/* Balance: 6 significant digits */}
+                      {t.balance!=null&&(
+                        <div style={{fontSize:10,color:"var(--lime)",fontFamily:"var(--mono)",marginTop:2,fontWeight:600}}>
+                          {fmtSig6(t.balance)} held
+                        </div>
+                      )}
+                      {/* USD value of held balance */}
+                      {t.balance!=null&&t.price>0&&(
+                        <div style={{fontSize:10,color:"var(--text3)",fontFamily:"var(--mono)"}}>
+                          ≈ ${(t.balance*t.price).toLocaleString(undefined,{maximumFractionDigits:2})}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
           </div>
         </div>
       )}
