@@ -1001,7 +1001,9 @@ async function fetchJupiterPricesByMint(mints){
   const uniq = Array.from(new Set((mints||[]).filter(Boolean)));
   if(uniq.length===0) return {};
   try{
-    const r=await fetch(`https://price.jup.ag/v6/price?ids=${uniq.join(",")}`);
+    // Jupiter v6 price API — handles all SPL tokens including LP tokens
+    const r=await fetch(`https://price.jup.ag/v6/price?ids=${uniq.join(",")}`,
+      { signal: AbortSignal.timeout(8000) });
     if(!r.ok) throw new Error("HTTP "+r.status);
     const j=await r.json();
     const out={};
@@ -1016,39 +1018,157 @@ async function fetchJupiterPricesByMint(mints){
   }
 }
 
-// Fetch token metadata (logos, names, decimals) from Jupiter token list
-let _jupTokenCache = null;
+// ── Token metadata: Jupiter strict list + all-tokens fallback + Metaplex on-chain ──
+let _jupStrictCache  = null; // verified tokens only
+let _jupAllCache     = null; // all tokens (includes LP, meme, unknown)
+
 async function fetchJupiterTokenMeta(mints){
-  if(!_jupTokenCache){
+  const mintsArr = (mints||[]).filter(Boolean);
+  if(mintsArr.length===0) return {};
+
+  // 1. Try strict list first (fast, cached)
+  if(!_jupStrictCache){
     try{
-      const r=await fetch("https://token.jup.ag/strict");
+      const r=await fetch("https://token.jup.ag/strict",
+        { signal: AbortSignal.timeout(10000) });
       if(!r.ok) throw new Error("HTTP "+r.status);
       const tokens=await r.json();
-      _jupTokenCache={};
+      _jupStrictCache={};
       tokens.forEach(t=>{
-        _jupTokenCache[t.address]={
-          symbol:t.symbol,name:t.name,logo:t.logoURI,decimals:t.decimals
+        _jupStrictCache[t.address]={
+          symbol:t.symbol, name:t.name, logo:t.logoURI, decimals:t.decimals
         };
       });
+      console.log("✅ Jupiter strict list loaded:", Object.keys(_jupStrictCache).length, "tokens");
     }catch(e){
-      console.warn("Jupiter token list failed:",e.message);
-      _jupTokenCache={};
+      console.warn("Jupiter strict list failed:", e.message);
+      _jupStrictCache={};
     }
   }
+
+  // Check which mints are still missing after strict list
+  const missing = mintsArr.filter(m=>!_jupStrictCache[m]);
+
+  // 2. For missing mints, try the all-tokens list (larger, slower)
+  if(missing.length>0 && !_jupAllCache){
+    try{
+      const r=await fetch("https://token.jup.ag/all",
+        { signal: AbortSignal.timeout(15000) });
+      if(!r.ok) throw new Error("HTTP "+r.status);
+      const tokens=await r.json();
+      _jupAllCache={};
+      tokens.forEach(t=>{
+        _jupAllCache[t.address]={
+          symbol:t.symbol, name:t.name, logo:t.logoURI, decimals:t.decimals
+        };
+      });
+      console.log("✅ Jupiter all-tokens list loaded:", Object.keys(_jupAllCache).length, "tokens");
+    }catch(e){
+      console.warn("Jupiter all-tokens list failed:", e.message);
+      _jupAllCache={};
+    }
+  }
+
+  // 3. For still-missing mints, try Metaplex on-chain metadata
+  const stillMissing = missing.filter(m=>!(_jupAllCache&&_jupAllCache[m]));
+  const metaplexMeta = {};
+  if(stillMissing.length>0){
+    await Promise.allSettled(stillMissing.map(async mint=>{
+      try{
+        // Derive Metaplex metadata PDA: seeds = ["metadata", METAPLEX_PROGRAM, mint]
+        const METAPLEX_PROGRAM = new window.solanaWeb3.PublicKey(
+          "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+        );
+        const mintPk = new window.solanaWeb3.PublicKey(mint);
+        const [metadataPDA] = await window.solanaWeb3.PublicKey.findProgramAddress(
+          [
+            new TextEncoder().encode("metadata"),
+            METAPLEX_PROGRAM.toBytes(),
+            mintPk.toBytes()
+          ],
+          METAPLEX_PROGRAM
+        );
+        const info = await rpcFetch("getAccountInfo",
+          [metadataPDA.toBase58(), {encoding:"base64"}]);
+        if(!info?.value?.data?.[0]) return;
+
+        // Decode Metaplex metadata (simplified — extract name, symbol, uri)
+        const b64 = info.value.data[0];
+        const bin = atob(b64);
+        const bytes = new Uint8Array(bin.length);
+        for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+
+        // Metaplex metadata layout (after 1-byte key + 32-byte update_auth + 32-byte mint):
+        // offset 65: name (4-byte LE length prefix + UTF-8 bytes, padded to 32)
+        // offset 101: symbol (4-byte LE length prefix + UTF-8 bytes, padded to 10)
+        // offset 115: uri (4-byte LE length prefix + UTF-8 bytes, padded to 200)
+        const readStr = (offset) => {
+          const len = bytes[offset] | (bytes[offset+1]<<8) | (bytes[offset+2]<<16) | (bytes[offset+3]<<24);
+          if(len<=0||len>500) return "";
+          const chars = [];
+          for(let i=0;i<len;i++){
+            const c = bytes[offset+4+i];
+            if(c===0) break;
+            chars.push(String.fromCharCode(c));
+          }
+          return chars.join("").trim();
+        };
+
+        const name   = readStr(65);
+        const symbol = readStr(101);
+        const uri    = readStr(115);
+
+        if(name||symbol){
+          metaplexMeta[mint] = {
+            symbol: symbol||("TKN-"+mint.slice(0,4)),
+            name:   name||("Token "+mint.slice(0,8)),
+            logo:   null, // will try to fetch from uri below
+            decimals: 0,
+            uri
+          };
+          // Optionally fetch off-chain JSON for logo
+          if(uri && uri.startsWith("http")){
+            try{
+              const jr = await fetch(uri, { signal: AbortSignal.timeout(4000) });
+              if(jr.ok){
+                const jj = await jr.json();
+                if(jj.image) metaplexMeta[mint].logo = jj.image;
+              }
+            }catch(_){}
+          }
+        }
+      }catch(_){
+        // Silently skip — not all mints have Metaplex metadata
+      }
+    }));
+  }
+
+  // Merge all sources: strict > all > metaplex
   const out={};
-  (mints||[]).forEach(m=>{
-    if(_jupTokenCache[m]) out[m]=_jupTokenCache[m];
+  mintsArr.forEach(m=>{
+    out[m] = _jupStrictCache[m]
+      || (_jupAllCache&&_jupAllCache[m])
+      || metaplexMeta[m]
+      || null;
   });
   return out;
 }
 
 function readUiTokenAmount(tokenAmount){
   if(!tokenAmount) return 0;
-  if(typeof tokenAmount.uiAmount==="number"&&isFinite(tokenAmount.uiAmount)) return tokenAmount.uiAmount;
+  // uiAmount can be null for very small amounts — always recompute from raw
   const amt = Number(tokenAmount.amount||0);
-  const dec = Number(tokenAmount.decimals||0);
-  if(!isFinite(amt)||!isFinite(dec)) return 0;
-  return amt/Math.pow(10,dec);
+  const dec = Number(tokenAmount.decimals??0);
+  if(!isFinite(amt)||!isFinite(dec)||amt===0) return 0;
+  // Prefer uiAmountString (most accurate, avoids float precision issues)
+  if(tokenAmount.uiAmountString){
+    const v = parseFloat(tokenAmount.uiAmountString);
+    if(isFinite(v)&&v>0) return v;
+  }
+  if(typeof tokenAmount.uiAmount==="number"&&isFinite(tokenAmount.uiAmount)&&tokenAmount.uiAmount>0){
+    return tokenAmount.uiAmount;
+  }
+  return amt / Math.pow(10, dec);
 }
 
 // ── SNS Domain Resolution ──
@@ -1130,31 +1250,84 @@ function TokenLogo({token, size=36}) {
   );
 }
 
+// ── Wallet logos as inline SVG data URIs ──
+// Using official brand colors and shapes — no external image dependencies
+const WALLET_LOGOS = {
+  phantom: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Crect width='128' height='128' rx='26' fill='%234E44CE'/%3E%3Cpath d='M110.6 64.3c0 25.8-20.9 46.7-46.7 46.7-25.8 0-46.7-20.9-46.7-46.7 0-25.8 20.9-46.7 46.7-46.7 25.8 0 46.7 20.9 46.7 46.7z' fill='%23fff' opacity='.15'/%3E%3Cpath d='M63.9 28.5C44.3 28.5 28.5 44.3 28.5 63.9s15.8 35.4 35.4 35.4c19.6 0 35.4-15.8 35.4-35.4S83.5 28.5 63.9 28.5zm16.8 38.6c-1.8 3.1-5.1 5-8.7 5H55.8c-3.6 0-6.9-1.9-8.7-5l-4.2-7.3c-1.8-3.1-1.8-6.9 0-10l4.2-7.3c1.8-3.1 5.1-5 8.7-5H72c3.6 0 6.9 1.9 8.7 5l4.2 7.3c1.8 3.1 1.8 6.9 0 10l-4.2 7.3z' fill='%23fff'/%3E%3C/svg%3E`,
+
+  solflare: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Crect width='128' height='128' rx='26' fill='%23FC8B24'/%3E%3Cpath d='M64 18 L96 50 L80 50 L80 82 L64 110 L48 82 L48 50 L32 50 Z' fill='%23fff'/%3E%3Cpath d='M64 28 L88 52 L76 52 L76 80 L64 100 L52 80 L52 52 L40 52 Z' fill='%23FC8B24'/%3E%3C/svg%3E`,
+
+  backpack: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Crect width='128' height='128' rx='26' fill='%23E33E3F'/%3E%3Crect x='38' y='44' width='52' height='46' rx='8' fill='%23fff'/%3E%3Crect x='52' y='34' width='24' height='16' rx='6' fill='none' stroke='%23fff' stroke-width='5'/%3E%3Crect x='56' y='62' width='16' height='12' rx='4' fill='%23E33E3F'/%3E%3C/svg%3E`,
+
+  glow: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Crect width='128' height='128' rx='26' fill='%23A855F7'/%3E%3Ccircle cx='64' cy='64' r='28' fill='none' stroke='%23fff' stroke-width='6'/%3E%3Ccircle cx='64' cy='64' r='14' fill='%23fff'/%3E%3C/svg%3E`,
+
+  coin98: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Crect width='128' height='128' rx='26' fill='%23CCA92C'/%3E%3Ccircle cx='64' cy='64' r='32' fill='%23fff'/%3E%3Ctext x='64' y='72' text-anchor='middle' font-size='28' font-weight='bold' fill='%23CCA92C' font-family='Arial'%3EC98%3C/text%3E%3C/svg%3E`,
+
+  exodus: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Crect width='128' height='128' rx='26' fill='%230B0B1E'/%3E%3Cpolygon points='64,20 100,44 100,84 64,108 28,84 28,44' fill='none' stroke='%238B5CF6' stroke-width='5'/%3E%3Cpolygon points='64,36 86,50 86,78 64,92 42,78 42,50' fill='%238B5CF6'/%3E%3C/svg%3E`,
+
+  trust: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Crect width='128' height='128' rx='26' fill='%233375BB'/%3E%3Cpath d='M64 22 L96 36 L96 68 C96 86 82 100 64 106 C46 100 32 86 32 68 L32 36 Z' fill='%23fff'/%3E%3Cpath d='M64 34 L84 44 L84 68 C84 80 76 90 64 94 C52 90 44 80 44 68 L44 44 Z' fill='%233375BB'/%3E%3C/svg%3E`,
+
+  brave: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Crect width='128' height='128' rx='26' fill='%23FB542B'/%3E%3Cpath d='M64 20 L90 32 L98 60 L86 88 L64 108 L42 88 L30 60 L38 32 Z' fill='%23fff'/%3E%3Cpath d='M64 34 L80 42 L86 62 L78 80 L64 92 L50 80 L42 62 L48 42 Z' fill='%23FB542B'/%3E%3C/svg%3E`,
+
+  mathwallet: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Crect width='128' height='128' rx='26' fill='%230E0E0E'/%3E%3Crect x='28' y='44' width='72' height='40' rx='8' fill='none' stroke='%23fff' stroke-width='5'/%3E%3Ccircle cx='64' cy='64' r='10' fill='%23fff'/%3E%3Crect x='44' y='36' width='40' height='8' rx='4' fill='%23fff'/%3E%3C/svg%3E`,
+
+  ledger: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Crect width='128' height='128' rx='26' fill='%23000'/%3E%3Crect x='30' y='30' width='44' height='68' rx='4' fill='%23fff'/%3E%3Crect x='54' y='54' width='44' height='44' rx='4' fill='%23fff'/%3E%3C/svg%3E`,
+
+  torus: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Crect width='128' height='128' rx='26' fill='%230364FF'/%3E%3Ccircle cx='64' cy='64' r='30' fill='none' stroke='%23fff' stroke-width='8'/%3E%3Ccircle cx='64' cy='64' r='12' fill='%23fff'/%3E%3C/svg%3E`,
+};
+
 // ── Wallet Select Modal — real-time detection, persistence ──
 const WALLET_STORAGE_KEY = "solpay_last_wallet";
 
 function detectWallets() {
   const detected = [];
-  // Standard Solana wallet adapters
-  if (window.phantom?.solana?.isPhantom)
-    detected.push({ name:"Phantom",   provider:window.phantom.solana,  icon:"👻", id:"phantom" });
-  else if (window.solana?.isPhantom)
-    detected.push({ name:"Phantom",   provider:window.solana,          icon:"👻", id:"phantom" });
-  if (window.solflare?.isSolflare)
-    detected.push({ name:"Solflare",  provider:window.solflare,        icon:"🔥", id:"solflare" });
-  if (window.backpack?.isBackpack)
-    detected.push({ name:"Backpack",  provider:window.backpack,        icon:"🎒", id:"backpack" });
-  if (window.glow?.isGlow)
-    detected.push({ name:"Glow",      provider:window.glow,            icon:"✨", id:"glow" });
-  if (window.coin98?.sol)
-    detected.push({ name:"Coin98",    provider:window.coin98.sol,      icon:"🪙", id:"coin98" });
-  if (window.exodus?.solana)
-    detected.push({ name:"Exodus",    provider:window.exodus.solana,   icon:"🌊", id:"exodus" });
-  if (window.trustwallet?.solana)
-    detected.push({ name:"Trust Wallet", provider:window.trustwallet.solana, icon:"🛡️", id:"trust" });
-  // Brave built-in wallet
-  if (window.braveSolana)
-    detected.push({ name:"Brave Wallet", provider:window.braveSolana, icon:"🦁", id:"brave" });
+
+  // ── Phantom ──
+  const phantomProvider = window.phantom?.solana || (window.solana?.isPhantom ? window.solana : null);
+  if(phantomProvider?.isPhantom)
+    detected.push({ name:"Phantom",      provider:phantomProvider,           logo:WALLET_LOGOS.phantom,    id:"phantom",    url:"https://phantom.app" });
+
+  // ── Solflare ──
+  // Solflare injects window.solflare (isSolflare=true) — never share with Phantom
+  if(window.solflare?.isSolflare)
+    detected.push({ name:"Solflare",     provider:window.solflare,           logo:WALLET_LOGOS.solflare,   id:"solflare",   url:"https://solflare.com" });
+
+  // ── Backpack ──
+  if(window.backpack?.isBackpack || window.xnft?.solana)
+    detected.push({ name:"Backpack",     provider:window.backpack||window.xnft?.solana, logo:WALLET_LOGOS.backpack, id:"backpack", url:"https://backpack.app" });
+
+  // ── Glow ──
+  if(window.glow?.solana?.isGlow || window.glowSolana)
+    detected.push({ name:"Glow",         provider:window.glow?.solana||window.glowSolana, logo:WALLET_LOGOS.glow, id:"glow", url:"https://glow.app" });
+
+  // ── Coin98 ──
+  if(window.coin98?.sol || window.coin98?.solana)
+    detected.push({ name:"Coin98",       provider:window.coin98.sol||window.coin98.solana, logo:WALLET_LOGOS.coin98, id:"coin98", url:"https://coin98.com" });
+
+  // ── Exodus ──
+  if(window.exodus?.solana)
+    detected.push({ name:"Exodus",       provider:window.exodus.solana,      logo:WALLET_LOGOS.exodus,     id:"exodus",     url:"https://exodus.com" });
+
+  // ── Trust Wallet ──
+  if(window.trustwallet?.solana || window.trustWallet?.solana)
+    detected.push({ name:"Trust Wallet", provider:window.trustwallet?.solana||window.trustWallet?.solana, logo:WALLET_LOGOS.trust, id:"trust", url:"https://trustwallet.com" });
+
+  // ── Brave Wallet ──
+  if(window.braveSolana || (window.solana?.isBraveWallet))
+    detected.push({ name:"Brave Wallet", provider:window.braveSolana||window.solana, logo:WALLET_LOGOS.brave, id:"brave", url:"https://brave.com/wallet" });
+
+  // ── MathWallet ──
+  if(window.solana?.isMathWallet || window.mathwallet?.solana)
+    detected.push({ name:"MathWallet",   provider:window.mathwallet?.solana||window.solana, logo:WALLET_LOGOS.mathwallet, id:"mathwallet", url:"https://mathwallet.org" });
+
+  // ── Ledger (via Ledger Live dApp browser) ──
+  if(window.ledgerSolana || window.solana?.isLedger)
+    detected.push({ name:"Ledger",       provider:window.ledgerSolana||window.solana, logo:WALLET_LOGOS.ledger, id:"ledger", url:"https://ledger.com" });
+
+  // ── Torus ──
+  if(window.torus?.solana || window.solana?.isTorus)
+    detected.push({ name:"Torus",        provider:window.torus?.solana||window.solana, logo:WALLET_LOGOS.torus, id:"torus", url:"https://tor.us" });
+
   return detected;
 }
 
@@ -1163,9 +1336,9 @@ function WalletSelectModal({onClose, onSelect}) {
   const [connecting, setConnecting] = React.useState(null);
   const [err, setErr] = React.useState(null);
 
-  // Re-scan every 500 ms so newly installed extensions appear without reload
+  // Re-scan every 600 ms so newly installed extensions appear without reload
   React.useEffect(() => {
-    const id = setInterval(() => setWallets(detectWallets()), 500);
+    const id = setInterval(() => setWallets(detectWallets()), 600);
     return () => clearInterval(id);
   }, []);
 
@@ -1187,43 +1360,74 @@ function WalletSelectModal({onClose, onSelect}) {
           <span className="modal-title">Connect Wallet</span>
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
+
         {err && (
           <div style={{background:"rgba(248,113,113,0.12)",border:"1px solid rgba(248,113,113,0.3)",
             borderRadius:8,padding:"8px 12px",fontSize:12,color:"var(--red)",marginBottom:10}}>
             ⚠ {err}
           </div>
         )}
+
         {wallets.length === 0 ? (
           <div style={{padding:"2rem",textAlign:"center",color:"var(--text2)"}}>
             <div style={{fontSize:36,marginBottom:12}}>🔐</div>
-            <div style={{fontSize:14,fontWeight:600,marginBottom:6}}>No Wallet Detected</div>
-            <div style={{fontSize:12,color:"var(--text3)",lineHeight:1.6}}>
-              Install <a href="https://phantom.app" target="_blank" rel="noopener" style={{color:"var(--lime)"}}>Phantom</a> or{" "}
-              <a href="https://solflare.com" target="_blank" rel="noopener" style={{color:"var(--lime)"}}>Solflare</a> browser extension,
-              then this list will update automatically.
+            <div style={{fontSize:14,fontWeight:600,marginBottom:8}}>No Wallet Detected</div>
+            <div style={{fontSize:12,color:"var(--text3)",lineHeight:1.7}}>
+              Install a Solana wallet extension to continue:
+            </div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:8,justifyContent:"center",marginTop:12}}>
+              {[
+                {name:"Phantom",  url:"https://phantom.app"},
+                {name:"Solflare", url:"https://solflare.com"},
+                {name:"Backpack", url:"https://backpack.app"},
+              ].map(w=>(
+                <a key={w.name} href={w.url} target="_blank" rel="noopener"
+                  style={{fontSize:12,color:"var(--lime)",fontWeight:600,
+                    background:"rgba(163,230,53,0.08)",border:"1px solid rgba(163,230,53,0.25)",
+                    borderRadius:8,padding:"5px 12px",textDecoration:"none"}}>
+                  {w.name} ↗
+                </a>
+              ))}
+            </div>
+            <div style={{fontSize:11,color:"var(--text3)",marginTop:12}}>
+              This list updates automatically once installed.
             </div>
           </div>
         ) : (
-          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+          <div style={{display:"flex",flexDirection:"column",gap:4}}>
             {wallets.map(w => (
               <div key={w.id} className="modal-item"
-                style={{opacity:connecting&&connecting!==w.id?0.4:1,cursor:connecting?"not-allowed":"pointer"}}
+                style={{
+                  opacity: connecting && connecting!==w.id ? 0.35 : 1,
+                  cursor: connecting ? "not-allowed" : "pointer",
+                  transition:"opacity 0.2s"
+                }}
                 onClick={()=>!connecting&&handleSelect(w)}>
-                <div style={{fontSize:26,width:36,textAlign:"center"}}>{w.icon}</div>
+                {/* Wallet logo */}
+                <img src={w.logo} alt={w.name}
+                  style={{width:36,height:36,borderRadius:10,flexShrink:0,objectFit:"cover"}}
+                  onError={e=>{e.target.style.display="none";}}
+                />
                 <div style={{flex:1}}>
                   <div className="m-name">{w.name}</div>
                   <div className="m-full">Solana wallet</div>
                 </div>
-                {connecting===w.id && (
-                  <div className="spin" style={{width:16,height:16,borderWidth:2}}/>
+                {connecting===w.id ? (
+                  <div style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:"var(--text3)"}}>
+                    <div className="spin" style={{width:14,height:14,borderWidth:2}}/>
+                    Connecting…
+                  </div>
+                ) : (
+                  <span style={{fontSize:18,color:"var(--text3)"}}>›</span>
                 )}
               </div>
             ))}
           </div>
         )}
-        <div style={{marginTop:14,fontSize:11,color:"var(--text3)",textAlign:"center",lineHeight:1.5}}>
-          By connecting you agree to the terms of service.
-          Your keys never leave your device.
+
+        <div style={{marginTop:14,fontSize:11,color:"var(--text3)",textAlign:"center",lineHeight:1.5,
+          borderTop:"1px solid var(--border)",paddingTop:12}}>
+          Your private keys never leave your device.
         </div>
       </div>
     </div>
@@ -1390,7 +1594,8 @@ function App() {
       // SOL balance
       const balRes=await rpcFetch("getBalance",[pubkey,{commitment:"confirmed"}]);
       setSolBalance(balRes.value/1e9);
-      // SPL token accounts (legacy + token-2022)
+
+      // SPL token accounts — both legacy Token Program and Token-2022
       const tokenQueries = await Promise.allSettled([
         rpcFetch("getTokenAccountsByOwner",[
           pubkey,
@@ -1407,85 +1612,171 @@ function App() {
         .filter(x=>x.status==="fulfilled")
         .flatMap(x=>(x.value&&x.value.value)||[]);
 
+      // Aggregate by mint — sum across multiple accounts for same mint
       const byMint = {};
       tokenAccounts.forEach(a=>{
-        const info=a?.account?.data?.parsed?.info;
-        if(!info||!info.mint||!info.tokenAmount) return;
-        const mint=info.mint;
-        const uiAmount=readUiTokenAmount(info.tokenAmount);
-        if(!(uiAmount>0)) return;
-        const meta=KNOWN_MINTS[mint]||{};
-        const fallbackSym=("TKN-"+mint.slice(0,4)).toUpperCase();
-        if(!byMint[mint]){
-          byMint[mint]={
-            mint,
-            uiAmount:0,
-            balance:0,
-            symbol:meta.symbol||fallbackSym,
-            name:meta.name||("Token "+mint.slice(0,6)+"…"),
-            price:meta.price
-          };
+        try{
+          const info=a?.account?.data?.parsed?.info;
+          if(!info||!info.mint) return;
+          const mint=info.mint;
+          const tokenAmount=info.tokenAmount;
+          if(!tokenAmount) return;
+
+          const uiAmount=readUiTokenAmount(tokenAmount);
+          // Include zero-balance accounts in the map but mark them
+          // (we filter >0 later; keeping them lets us show NFTs with supply=1)
+          const decimals = Number(tokenAmount.decimals??0);
+          const rawAmount = Number(tokenAmount.amount||0);
+
+          const meta=KNOWN_MINTS[mint]||{};
+          const fallbackSym=("TKN-"+mint.slice(0,4)).toUpperCase();
+
+          if(!byMint[mint]){
+            byMint[mint]={
+              mint,
+              uiAmount:0,
+              balance:0,
+              rawAmount:0,
+              decimals,
+              symbol:meta.symbol||fallbackSym,
+              name:meta.name||("Token "+mint.slice(0,8)+"…"),
+              price:meta.price||0,
+              logo:meta.logo||null,
+              isNFT: decimals===0 && rawAmount===1, // likely NFT
+            };
+          }
+          byMint[mint].uiAmount  += uiAmount;
+          byMint[mint].rawAmount += rawAmount;
+          byMint[mint].balance    = byMint[mint].uiAmount;
+          // Re-evaluate NFT flag after aggregation
+          byMint[mint].isNFT = byMint[mint].decimals===0 && byMint[mint].rawAmount===1;
+        }catch(rowErr){
+          console.warn("Token account parse error:", rowErr.message);
         }
-        byMint[mint].uiAmount += uiAmount;
-        byMint[mint].balance = byMint[mint].uiAmount;
       });
-      const raw=Object.values(byMint);
-      const mintPrices=await fetchJupiterPricesByMint(raw.map(t=>t.mint));
-      const mintMeta=await fetchJupiterTokenMeta(raw.map(t=>t.mint));
-      const toks=raw
-        .map(t=>{
-          const meta=mintMeta[t.mint]||{};
-          const knownMint=KNOWN_MINTS[t.mint]||{};
-          return {
-            ...t,
-            price:mintPrices[t.mint]||t.price||0,
-            logo:knownMint.logo||meta.logo||null,
-            symbol:meta.symbol||t.symbol,
-            name:meta.name||t.name,
-            decimals:meta.decimals||t.decimals||6
-          };
-        })
-        .sort((a,b)=>(b.uiAmount*(b.price||0))-(a.uiAmount*(a.price||0)));
+
+      const raw = Object.values(byMint).filter(t=>t.uiAmount>0||t.rawAmount>0);
+
+      // Fetch prices and metadata in parallel
+      const [mintPrices, mintMeta] = await Promise.all([
+        fetchJupiterPricesByMint(raw.map(t=>t.mint)),
+        fetchJupiterTokenMeta(raw.map(t=>t.mint))
+      ]);
+
+      const toks = raw.map(t=>{
+        const meta    = mintMeta[t.mint]||{};
+        const known   = KNOWN_MINTS[t.mint]||{};
+        const price   = mintPrices[t.mint]||known.price||0;
+        const logo    = known.logo||meta.logo||null;
+        const symbol  = known.symbol||meta.symbol||t.symbol;
+        const name    = known.name||meta.name||t.name;
+        const decimals= known.decimals??meta.decimals??t.decimals??6;
+
+        // Recompute uiAmount with correct decimals from metadata
+        let uiAmount = t.uiAmount;
+        if(decimals!==t.decimals && t.rawAmount>0){
+          uiAmount = t.rawAmount / Math.pow(10, decimals);
+        }
+
+        return {
+          ...t,
+          uiAmount,
+          balance: uiAmount,
+          price,
+          logo,
+          symbol,
+          name,
+          decimals,
+          // Tag token type for display
+          tokenType: t.isNFT ? "nft"
+            : decimals===0 ? "fungible-no-dec"
+            : price===0    ? "unknown"
+            : "fungible",
+        };
+      })
+      // Sort: fungible with price first (by USD value desc), then unknown, then NFTs
+      .sort((a,b)=>{
+        const aVal = a.uiAmount*(a.price||0);
+        const bVal = b.uiAmount*(b.price||0);
+        if(bVal!==aVal) return bVal-aVal;
+        return (a.symbol||"").localeCompare(b.symbol||"");
+      });
+
       setSplTokens(toks);
     }catch(e){
-      setWalletError(e.message||"RPC error");
+      setWalletError(e.message||"RPC error — check your connection and try again");
+      console.error("fetchBalances error:", e);
     }
     setWalletLoading(false);
   }
 
-  async function connectWallet(){
-    setShowWalletSelect(true);
-  }
+  // Track the active provider reference so send functions use the right one
+  const activeProviderRef = React.useRef(null);
 
   async function handleWalletSelect(provider, walletId){
     setShowWalletSelect(false);
     if(!provider){
-      alert("No Solana wallet found.\nInstall Phantom or Solflare browser extension then reload.");
+      setToast({msg:"No Solana wallet found. Install Phantom or Solflare then reload.", type:"error"});
       return;
     }
     try{
-      const resp=await provider.connect();
-      const pk=resp.publicKey.toString();
-      setWalletPubkey(pk);setConnected(true);
-      // Persist chosen wallet so we can auto-reconnect on reload
+      const resp = await provider.connect();
+
+      // Normalise public key — Solflare returns publicKey directly on the provider
+      // after connect(), while Phantom returns it on the response object.
+      let pk;
+      if(resp?.publicKey){
+        pk = typeof resp.publicKey.toString === "function"
+          ? resp.publicKey.toString()
+          : String(resp.publicKey);
+      } else if(provider.publicKey){
+        pk = typeof provider.publicKey.toString === "function"
+          ? provider.publicKey.toString()
+          : String(provider.publicKey);
+      } else {
+        throw new Error("Could not read public key from wallet response");
+      }
+
+      if(!pk || pk.length < 32) throw new Error("Invalid public key returned by wallet");
+
+      activeProviderRef.current = provider;
+      setWalletPubkey(pk);
+      setConnected(true);
       try{ localStorage.setItem(WALLET_STORAGE_KEY, walletId||"phantom"); }catch(_){}
       fetchBalances(pk);
     }catch(e){
       const msg = e?.message||"";
-      if(msg.includes("User rejected")||msg.includes("rejected")||e?.code===4001){
-        setToast({msg:"Connection cancelled by user.", type:"error"});
+      if(msg.includes("User rejected")||msg.includes("rejected")||
+         msg.includes("cancelled")||msg.includes("canceled")||e?.code===4001){
+        setToast({msg:"Connection cancelled.", type:"error"});
       } else {
         setToast({msg:"Wallet connection failed: "+(msg||"Unknown error"), type:"error"});
       }
-      console.error("Wallet connect error:",e);
+      console.error("Wallet connect error:", e);
     }
   }
 
   function disconnectWallet(){
     setConnected(false);setWalletPubkey(null);setSolBalance(null);setSplTokens([]);setWalletError(null);
-    setToken("USDC"); // reset token selection
+    setToken("USDC");
+    activeProviderRef.current = null;
     try{ localStorage.removeItem(WALLET_STORAGE_KEY); }catch(_){}
-    try{const p=window.phantom?.solana||window.solana||window.solflare;if(p)p.disconnect();}catch(e){}
+    try{
+      const p = window.phantom?.solana||window.solana||window.solflare;
+      if(p&&typeof p.disconnect==="function") p.disconnect();
+    }catch(e){}
+  }
+
+  // Helper: get the active provider for signing
+  function getProvider(){
+    if(activeProviderRef.current) return activeProviderRef.current;
+    // Fallback scan
+    const wallets = detectWallets();
+    return wallets[0]?.provider || window.phantom?.solana || window.solana || window.solflare || null;
+  }
+
+  async function connectWallet(){
+    setShowWalletSelect(true);
   }
 
   // Auto-reconnect on mount if a wallet was previously connected
@@ -1497,13 +1788,18 @@ function App() {
         const wallets = detectWallets();
         const w = wallets.find(x=>x.id===lastWallet) || wallets[0];
         if(!w) return;
-        // Use eager connect (no popup) — only works if already authorized
         const resp = await w.provider.connect({ onlyIfTrusted: true });
-        const pk = resp.publicKey.toString();
+        let pk;
+        if(resp?.publicKey){
+          pk = typeof resp.publicKey.toString==="function" ? resp.publicKey.toString() : String(resp.publicKey);
+        } else if(w.provider.publicKey){
+          pk = typeof w.provider.publicKey.toString==="function" ? w.provider.publicKey.toString() : String(w.provider.publicKey);
+        }
+        if(!pk) throw new Error("No public key");
+        activeProviderRef.current = w.provider;
         setWalletPubkey(pk); setConnected(true);
         fetchBalances(pk);
       }catch(e){
-        // Silently ignore — user hasn't authorized yet or wallet not installed
         try{ localStorage.removeItem(WALLET_STORAGE_KEY); }catch(_){}
       }
     }
@@ -1514,7 +1810,7 @@ function App() {
   async function chargePlatformFeeInSol(totalFeeSol, reason){
     const feeLamports = toLamports(totalFeeSol);
     if(feeLamports<=0) throw new Error("Invalid fee amount.");
-    const provider = window.solana||window.solflare;
+    const provider = getProvider();
     if(!provider) throw new Error("Wallet provider not found.");
     const fromPubkey = provider.publicKey || (walletPubkey?new window.solanaWeb3.PublicKey(walletPubkey):null);
     if(!fromPubkey) throw new Error("Connect wallet first.");
@@ -1538,8 +1834,8 @@ function App() {
     if(!recipient||!(parseFloat(amount)>0)) return;
     try{
       setSendingFee(true);
-      const provider=window.solana||window.solflare;
-      if(!provider) throw new Error("Wallet provider not found.");
+      const provider=getProvider();
+      if(!provider) throw new Error("Wallet provider not found. Please reconnect.");
 
       // Resolve recipient address (supports .sol domains and raw addresses)
       let recipientAddress = recipient.trim();
@@ -1681,8 +1977,8 @@ function App() {
       setSendingFee(true);
       const safeRows = Array.isArray(rows)?rows:[];
       if(safeRows.length===0) throw new Error("No valid recipients.");
-      const provider = window.solana||window.solflare;
-      if(!provider) throw new Error("Wallet provider not found.");
+      const provider = getProvider();
+      if(!provider) throw new Error("Wallet provider not found. Please reconnect.");
       const fromPubkey = provider.publicKey;
       const feePubkey = new window.solanaWeb3.PublicKey(FEE_WALLET);
 
