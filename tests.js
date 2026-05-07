@@ -1,17 +1,21 @@
 /**
  * Solpay — unit tests
  *
- * Run with Node.js (no test framework required):
+ * Run with Node.js:
  *   node Solpay/tests.js
  *
- * Tests verify:
- *   (a) Token loads without errors — RPC list ordering and retry logic
- *   (b) No pre-filled 1000 amount appears
+ * Covers:
+ *   (a) Token loads without errors — RPC ordering, retry, Jupiter v3 API
+ *   (b) No pre-filled 1000 amount
  *   (c) USD is the initial currency
- *   (d) NGN remains selectable in the currency list
+ *   (d) NGN remains selectable
+ *   (e) USD and NGN flags are correct emoji (not corrupted replacement chars)
  */
 
 "use strict";
+
+const fs   = require("fs");
+const path = require("path");
 
 // ─── Minimal test harness ────────────────────────────────────────────────────
 let passed = 0, failed = 0;
@@ -26,203 +30,244 @@ function test(name, fn) {
     failed++;
   }
 }
-function assert(condition, msg) {
-  if (!condition) throw new Error(msg || "Assertion failed");
-}
-function assertEqual(a, b, msg) {
-  if (a !== b) throw new Error((msg || "Expected equal") + ` — got ${JSON.stringify(a)}, expected ${JSON.stringify(b)}`);
-}
-function assertNotEqual(a, b, msg) {
-  if (a === b) throw new Error((msg || "Expected not equal") + ` — both are ${JSON.stringify(a)}`);
-}
-function assertIncludes(arr, value, msg) {
-  if (!arr.includes(value)) throw new Error((msg || "Expected array to include value") + ` — ${JSON.stringify(value)} not found`);
-}
+function assert(cond, msg)    { if (!cond) throw new Error(msg || "Assertion failed"); }
+function assertEqual(a, b, m) { if (a !== b) throw new Error((m||"Expected equal")+` — got ${JSON.stringify(a)}, expected ${JSON.stringify(b)}`); }
+function assertNotEqual(a, b, m) { if (a === b) throw new Error((m||"Expected not equal")+` — both are ${JSON.stringify(a)}`); }
 
-// ─── Read the source file ────────────────────────────────────────────────────
-const fs = require("fs");
-const path = require("path");
 const src = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
 
-// ─── (a) Token loads without errors ─────────────────────────────────────────
-console.log("\n(a) Token loading — RPC reliability");
+// ─── (a) Token loading ───────────────────────────────────────────────────────
+console.log("\n(a) Token loading — RPC reliability & Jupiter v3 API");
 
 test("api.mainnet-beta.solana.com is first in RPC_LIST", () => {
-  const match = src.match(/const RPC_LIST\s*=\s*\[([\s\S]*?)\];/);
-  assert(match, "RPC_LIST not found");
-  const listText = match[1];
-  const urls = listText.match(/https?:\/\/[^\s"']+/g) || [];
-  assert(urls.length > 0, "No URLs found in RPC_LIST");
-  assertEqual(
-    urls[0],
-    "https://api.mainnet-beta.solana.com",
-    "First RPC endpoint should be api.mainnet-beta.solana.com"
-  );
+  const m = src.match(/const RPC_LIST\s*=\s*\[([\s\S]*?)\];/);
+  assert(m, "RPC_LIST not found");
+  const urls = m[1].match(/https?:\/\/[^\s"']+/g) || [];
+  assert(urls.length > 0, "No URLs in RPC_LIST");
+  assertEqual(urls[0], "https://api.mainnet-beta.solana.com",
+    "First RPC should be api.mainnet-beta.solana.com");
 });
 
-test("RPC_LIST contains at least 3 fallback endpoints", () => {
-  const match = src.match(/const RPC_LIST\s*=\s*\[([\s\S]*?)\];/);
-  assert(match, "RPC_LIST not found");
-  const urls = (match[1].match(/https?:\/\/[^\s"']+/g) || []);
-  assert(urls.length >= 3, `Expected ≥3 RPC endpoints, got ${urls.length}`);
+test("RPC_LIST has at least 3 fallback endpoints", () => {
+  const m = src.match(/const RPC_LIST\s*=\s*\[([\s\S]*?)\];/);
+  assert(m, "RPC_LIST not found");
+  const urls = m[1].match(/https?:\/\/[^\s"']+/g) || [];
+  assert(urls.length >= 3, `Expected ≥3 endpoints, got ${urls.length}`);
 });
 
-test("rpcFetch includes Accept: application/json header", () => {
-  assert(
-    src.includes('"Accept":"application/json"') || src.includes('"Accept": "application/json"'),
-    "rpcFetch should send Accept: application/json header"
-  );
+test("rpcFetch sends Accept: application/json header", () => {
+  assert(src.includes('"Accept":"application/json"') || src.includes('"Accept": "application/json"'),
+    "rpcFetch must send Accept: application/json");
 });
 
-test("rpcFetch has AbortSignal timeout to prevent hanging", () => {
-  assert(
-    src.includes("AbortSignal.timeout(12000)") || src.includes("AbortSignal.timeout("),
-    "rpcFetch should use AbortSignal.timeout"
-  );
+test("rpcFetch uses AbortSignal.timeout to prevent hanging", () => {
+  assert(src.includes("AbortSignal.timeout("), "rpcFetch must use AbortSignal.timeout");
 });
 
-test("fetchBalances retries SOL balance call on first failure", () => {
-  assert(
-    src.includes("SOL balance first attempt failed, retrying"),
-    "fetchBalances should retry the SOL balance call"
-  );
+test("fetchBalances retries SOL balance on first failure", () => {
+  assert(src.includes("SOL balance first attempt failed, retrying"),
+    "fetchBalances must retry the SOL balance call");
 });
 
 test("fetchBalances uses two-pass strategy (fast + enriched)", () => {
-  assert(src.includes("Publish fast pass"), "Fast pass comment not found");
+  assert(src.includes("Publish fast pass"),     "Fast pass comment not found");
   assert(src.includes("Publish enriched pass"), "Enriched pass comment not found");
 });
 
-test("walletError is cleared at the start of each fetchBalances call", () => {
-  assert(
-    src.includes("setWalletLoading(true);setWalletError(null);"),
-    "walletError should be reset at the start of fetchBalances"
-  );
+test("walletError is cleared at start of fetchBalances", () => {
+  assert(src.includes("setWalletLoading(true);setWalletError(null);"),
+    "walletError must be reset at start of fetchBalances");
 });
 
-test("fetchJupiterTokenMeta catches errors and returns empty object on failure", () => {
-  // Both strict and all-token fetches have try/catch that set cache to {}
-  const strictFail = src.includes("_jupStrictCache={}");
-  const allFail    = src.includes("_jupAllCache={}");
-  assert(strictFail, "Jupiter strict list failure should set _jupStrictCache={}");
-  assert(allFail,    "Jupiter all-tokens failure should set _jupAllCache={}");
+test("Jupiter Price API uses v3 endpoint (not deprecated v6)", () => {
+  // v6 endpoint must not appear anywhere
+  assert(!src.includes("price.jup.ag/v6/price"),
+    "Deprecated price.jup.ag/v6/price endpoint must be removed");
+  // v3 endpoint must be present
+  assert(src.includes("api.jup.ag/price/v3"),
+    "Current api.jup.ag/price/v3 endpoint must be used");
 });
 
-test("fetchJupiterPricesByMint returns empty object on failure (never throws)", () => {
-  // The function has a catch that returns {}
+test("Jupiter v3 response field is usdPrice (not .price)", () => {
+  // The fetchJupiterPricesByMint function must read .usdPrice
   const fnMatch = src.match(/async function fetchJupiterPricesByMint[\s\S]*?^}/m);
   assert(fnMatch, "fetchJupiterPricesByMint not found");
-  assert(
-    fnMatch[0].includes("return {};"),
-    "fetchJupiterPricesByMint should return {} on error"
-  );
+  assert(fnMatch[0].includes("usdPrice"),
+    "fetchJupiterPricesByMint must read .usdPrice from v3 response");
+  assert(!fnMatch[0].includes("?.data?.["),
+    "fetchJupiterPricesByMint must not use v6 .data[] response shape");
+});
+
+test("fetchJupiterPricesByMint batches requests at 50 ids", () => {
+  const fnMatch = src.match(/async function fetchJupiterPricesByMint[\s\S]*?^}/m);
+  assert(fnMatch, "fetchJupiterPricesByMint not found");
+  assert(fnMatch[0].includes("BATCH") || fnMatch[0].includes("50"),
+    "fetchJupiterPricesByMint must batch at 50 ids per request");
+});
+
+test("fetchJupiterPricesByMint has CoinGecko fallback on Jupiter failure", () => {
+  const fnMatch = src.match(/async function fetchJupiterPricesByMint[\s\S]*?^}/m);
+  assert(fnMatch, "fetchJupiterPricesByMint not found");
+  assert(fnMatch[0].includes("coingecko.com"),
+    "fetchJupiterPricesByMint must fall back to CoinGecko on Jupiter failure");
+});
+
+test("fetchJupiterPricesByMint returns {} on total failure (never throws)", () => {
+  const fnMatch = src.match(/async function fetchJupiterPricesByMint[\s\S]*?^}/m);
+  assert(fnMatch, "fetchJupiterPricesByMint not found");
+  assert(fnMatch[0].includes("return out;") || fnMatch[0].includes("return {};"),
+    "fetchJupiterPricesByMint must return an object, never throw");
+});
+
+test("fetchLiveRates Jupiter fallback also uses v3 endpoint", () => {
+  assert(src.includes("api.jup.ag/price/v3"),
+    "fetchLiveRates Jupiter fallback must use v3 endpoint");
+  // The old v6 fallback in fetchLiveRates must be gone
+  const liveRatesFn = src.match(/async function fetchLiveRates[\s\S]*?_priceCache\.ts = now;/);
+  assert(liveRatesFn, "fetchLiveRates function not found");
+  assert(!liveRatesFn[0].includes("price.jup.ag/v6"),
+    "fetchLiveRates must not use deprecated v6 endpoint");
+});
+
+test("fetchLiveRates Jupiter fallback reads usdPrice field", () => {
+  const liveRatesFn = src.match(/async function fetchLiveRates[\s\S]*?_priceCache\.ts = now;/);
+  assert(liveRatesFn, "fetchLiveRates function not found");
+  assert(liveRatesFn[0].includes("usdPrice"),
+    "fetchLiveRates Jupiter fallback must read .usdPrice from v3 response");
+});
+
+test("fetchJupiterTokenMeta catches errors and returns empty on failure", () => {
+  assert(src.includes("_jupStrictCache={}"), "Strict list failure must set _jupStrictCache={}");
+  assert(src.includes("_jupAllCache={}"),    "All-tokens failure must set _jupAllCache={}");
 });
 
 // ─── (b) No pre-filled 1000 amount ──────────────────────────────────────────
 console.log("\n(b) No pre-filled 1000 amount");
 
-test("amount state initialises to empty string, not '1000'", () => {
-  assert(
-    src.includes('useState("")') || src.includes("useState('')"),
-    "amount useState should initialise to empty string"
-  );
-  // Specifically check the amount line
-  const amountLine = src.match(/const \[amount,setAmount\]=React\.useState\(([^)]+)\)/);
-  assert(amountLine, "amount state declaration not found");
-  assertEqual(
-    amountLine[1].replace(/['"]/g, ""),
-    "",
-    "amount should default to empty string"
-  );
+test("amount state initialises to empty string", () => {
+  const m = src.match(/const \[amount,setAmount\]=React\.useState\(([^)]+)\)/);
+  assert(m, "amount state not found");
+  assertEqual(m[1].replace(/['"]/g, ""), "", "amount must default to empty string");
 });
 
-test("'1000' does not appear as a React state default value", () => {
-  // Allow '1000' in non-state contexts (e.g. zIndex:1000, timeout values)
-  // but not as a useState argument for amount
-  const stateDefault = src.match(/useState\(['"]\s*1000\s*['"]\)/);
-  assert(!stateDefault, "Found useState('1000') — hard-coded default amount must be removed");
+test("useState('1000') does not appear anywhere", () => {
+  assert(!src.match(/useState\(['"]\s*1000\s*['"]\)/),
+    "Hard-coded useState('1000') must be removed");
 });
 
 test("globalAmt (bulk send) initialises to empty string", () => {
-  const match = src.match(/const \[globalAmt,setGlobalAmt\]=React\.useState\(([^)]+)\)/);
-  assert(match, "globalAmt state declaration not found");
-  assertEqual(
-    match[1].replace(/['"]/g, ""),
-    "",
-    "globalAmt should default to empty string"
-  );
+  const m = src.match(/const \[globalAmt,setGlobalAmt\]=React\.useState\(([^)]+)\)/);
+  assert(m, "globalAmt state not found");
+  assertEqual(m[1].replace(/['"]/g, ""), "", "globalAmt must default to empty string");
 });
 
 // ─── (c) USD is the initial currency ────────────────────────────────────────
 console.log("\n(c) USD as default currency");
 
 test("main currency state initialises to 'USD'", () => {
-  const match = src.match(/const \[currency,setCurrency\]=React\.useState\(([^)]+)\)/);
-  assert(match, "currency state declaration not found");
-  assertEqual(
-    match[1].replace(/['"]/g, ""),
-    "USD",
-    "currency should default to USD"
-  );
+  const m = src.match(/const \[currency,setCurrency\]=React\.useState\(([^)]+)\)/);
+  assert(m, "currency state not found");
+  assertEqual(m[1].replace(/['"]/g, ""), "USD", "currency must default to USD");
 });
 
 test("bulk currency state initialises to 'USD'", () => {
-  const match = src.match(/const \[bulkCurr,setBulkCurr\]=React\.useState\(([^)]+)\)/);
-  assert(match, "bulkCurr state declaration not found");
-  assertEqual(
-    match[1].replace(/['"]/g, ""),
-    "USD",
-    "bulkCurr should default to USD"
-  );
+  const m = src.match(/const \[bulkCurr,setBulkCurr\]=React\.useState\(([^)]+)\)/);
+  assert(m, "bulkCurr state not found");
+  assertEqual(m[1].replace(/['"]/g, ""), "USD", "bulkCurr must default to USD");
 });
 
-test("USD is the first entry in the CURRENCIES array", () => {
-  const match = src.match(/const CURRENCIES\s*=\s*\[([\s\S]*?)\];/);
-  assert(match, "CURRENCIES array not found");
-  const firstCode = match[1].match(/code:"([A-Z]+)"/);
-  assert(firstCode, "No currency code found in CURRENCIES");
-  assertEqual(firstCode[1], "USD", "First currency in CURRENCIES should be USD");
+test("USD is the first entry in CURRENCIES array", () => {
+  const m = src.match(/const CURRENCIES\s*=\s*\[([\s\S]*?)\];/);
+  assert(m, "CURRENCIES array not found");
+  const first = m[1].match(/code:"([A-Z]+)"/);
+  assert(first, "No currency code found");
+  assertEqual(first[1], "USD", "First currency must be USD");
 });
 
 // ─── (d) NGN remains selectable ─────────────────────────────────────────────
 console.log("\n(d) NGN remains in currency list");
 
-test("NGN is present in the CURRENCIES array", () => {
-  const match = src.match(/const CURRENCIES\s*=\s*\[([\s\S]*?)\];/);
-  assert(match, "CURRENCIES array not found");
-  assert(match[1].includes('code:"NGN"'), "NGN must remain in the CURRENCIES array");
+test("NGN is present in CURRENCIES array", () => {
+  const m = src.match(/const CURRENCIES\s*=\s*\[([\s\S]*?)\];/);
+  assert(m, "CURRENCIES array not found");
+  assert(m[1].includes('code:"NGN"'), "NGN must remain in CURRENCIES");
 });
 
-test("NGN has a valid rate defined", () => {
-  const match = src.match(/code:"NGN"[^}]+rate:(\d+)/);
-  assert(match, "NGN entry with rate not found");
-  const rate = Number(match[1]);
-  assert(rate > 0, `NGN rate should be positive, got ${rate}`);
+test("NGN has a positive rate", () => {
+  const m = src.match(/code:"NGN"[^}]+rate:(\d+)/);
+  assert(m, "NGN entry with rate not found");
+  assert(Number(m[1]) > 0, `NGN rate must be positive, got ${m[1]}`);
 });
 
-test("NGN has a flag emoji defined", () => {
-  assert(src.includes('code:"NGN"'), "NGN entry not found");
-  // The NGN entry should have a flag
-  const ngnBlock = src.match(/\{[^}]*code:"NGN"[^}]*\}/);
-  assert(ngnBlock, "NGN object block not found");
-  assert(ngnBlock[0].includes("flag:"), "NGN entry should have a flag property");
+test("NGN is not the default currency", () => {
+  const m = src.match(/const \[currency,setCurrency\]=React\.useState\(([^)]+)\)/);
+  assert(m, "currency state not found");
+  assertNotEqual(m[1].replace(/['"]/g, ""), "NGN", "NGN must not be the default currency");
 });
 
-test("NGN is not the default currency (USD is)", () => {
-  const currencyDefault = src.match(/const \[currency,setCurrency\]=React\.useState\(([^)]+)\)/);
-  assert(currencyDefault, "currency state not found");
-  assertNotEqual(
-    currencyDefault[1].replace(/['"]/g, ""),
-    "NGN",
-    "NGN should not be the default currency — USD should be"
-  );
+// ─── (e) USD and NGN flags are correct emoji ─────────────────────────────────
+console.log("\n(e) USD and NGN flag emoji correctness");
+
+// Correct regional indicator sequences
+const US_FLAG = '\u{1F1FA}\u{1F1F8}'; // 🇺🇸
+const NG_FLAG = '\u{1F1F3}\u{1F1EC}'; // 🇳🇬
+const CORRUPT = '\uFFFD';             // replacement character (bad encoding)
+
+test("USD flag is 🇺🇸 (U+1F1FA U+1F1F8)", () => {
+  assert(src.includes(US_FLAG),
+    "USD flag must be the correct 🇺🇸 regional indicator sequence");
+});
+
+test("NGN flag is 🇳🇬 (U+1F1F3 U+1F1EC)", () => {
+  assert(src.includes(NG_FLAG),
+    "NGN flag must be the correct 🇳🇬 regional indicator sequence");
+});
+
+test("No corrupted replacement characters (U+FFFD) in flag fields", () => {
+  // Find all flag: "..." values and check none contain U+FFFD
+  const flagValues = [...src.matchAll(/flag:"([^"]+)"/g)].map(m => m[1]);
+  assert(flagValues.length > 0, "No flag values found in source");
+  const corrupt = flagValues.filter(f => f.includes(CORRUPT));
+  assert(corrupt.length === 0,
+    `Found ${corrupt.length} corrupted flag value(s) — all flags must be valid emoji`);
+});
+
+test("USD flag value matches the same pattern as EUR flag (two regional indicators)", () => {
+  // EUR = U+1F1EA U+1F1FA — both codepoints in range U+1F1E6..U+1F1FF
+  const flagValues = [...src.matchAll(/code:"([A-Z]+)"[^}]+flag:"([^"]+)"/g)];
+  const usdEntry = flagValues.find(m => m[1] === "USD");
+  const eurEntry = flagValues.find(m => m[1] === "EUR");
+  assert(usdEntry, "USD entry not found");
+  assert(eurEntry, "EUR entry not found");
+  // Both should have exactly 2 Unicode codepoints (regional indicator pairs)
+  const usdCPs = [...usdEntry[2]];
+  const eurCPs = [...eurEntry[2]];
+  assertEqual(usdCPs.length, 2, `USD flag should have 2 codepoints, got ${usdCPs.length}`);
+  assertEqual(eurCPs.length, 2, `EUR flag should have 2 codepoints, got ${eurCPs.length}`);
+  // Each codepoint should be in the regional indicator range
+  const isRI = cp => cp.codePointAt(0) >= 0x1F1E6 && cp.codePointAt(0) <= 0x1F1FF;
+  assert(usdCPs.every(isRI), "USD flag codepoints must be regional indicators");
+});
+
+test("NGN flag value matches the same pattern as GBP flag", () => {
+  const flagValues = [...src.matchAll(/code:"([A-Z]+)"[^}]+flag:"([^"]+)"/g)];
+  const ngnEntry = flagValues.find(m => m[1] === "NGN");
+  const gbpEntry = flagValues.find(m => m[1] === "GBP");
+  assert(ngnEntry, "NGN entry not found");
+  assert(gbpEntry, "GBP entry not found");
+  const ngnCPs = [...ngnEntry[2]];
+  const gbpCPs = [...gbpEntry[2]];
+  assertEqual(ngnCPs.length, 2, `NGN flag should have 2 codepoints, got ${ngnCPs.length}`);
+  assertEqual(gbpCPs.length, 2, `GBP flag should have 2 codepoints, got ${gbpCPs.length}`);
+  const isRI = cp => cp.codePointAt(0) >= 0x1F1E6 && cp.codePointAt(0) <= 0x1F1FF;
+  assert(ngnCPs.every(isRI), "NGN flag codepoints must be regional indicators");
 });
 
 // ─── Summary ─────────────────────────────────────────────────────────────────
-console.log(`\n${"─".repeat(50)}`);
+console.log(`\n${"─".repeat(55)}`);
 console.log(`Results: ${passed} passed, ${failed} failed out of ${passed + failed} tests`);
 if (failed > 0) {
-  console.error("\nSome tests failed. Review the output above.");
+  console.error("\nSome tests failed — review output above.");
   process.exit(1);
 } else {
   console.log("\nAll tests passed ✅");

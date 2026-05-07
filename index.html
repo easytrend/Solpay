@@ -381,8 +381,8 @@ const FEE_FLAT_SOL = 0.0005; // per recipient
 const LAMPORTS_PER_SOL = 1_000_000_000;
 
 const CURRENCIES = [
-  { code:"USD", name:"US Dollar",            flag:"��", rate:1 },
-  { code:"NGN", name:"Nigerian Naira",       flag:"��", rate:1630 },
+  { code:"USD", name:"US Dollar",            flag:"🇺🇸", rate:1 },
+  { code:"NGN", name:"Nigerian Naira",       flag:"🇳🇬", rate:1630 },
   { code:"EUR", name:"Euro",                 flag:"🇪🇺", rate:0.92 },
   { code:"GBP", name:"British Pound",        flag:"🇬🇧", rate:0.79 },
   { code:"JPY", name:"Japanese Yen",         flag:"🇯🇵", rate:153 },
@@ -606,20 +606,23 @@ async function fetchLiveRates() {
     console.log("✅ CoinGecko prices | SOL=$"+result.crypto.SOL);
   }catch(e){
     console.warn("CoinGecko failed:", e.message);
-    // Fallback: Jupiter price API for Solana tokens
+    // Fallback: Jupiter Price API v3 for Solana tokens
     try{
       const mintIds = Object.keys(KNOWN_MINTS).join(",");
-      const r2 = await fetch(`https://price.jup.ag/v6/price?ids=${mintIds}`,
-        { signal: AbortSignal.timeout(6000) });
+      const r2 = await fetch(
+        `https://api.jup.ag/price/v3?ids=${mintIds}`,
+        { signal: AbortSignal.timeout(6000) }
+      );
       if(r2.ok){
         const j2 = await r2.json();
         Object.entries(KNOWN_MINTS).forEach(([mint,meta])=>{
-          const p = j2?.data?.[mint]?.price;
+          // v3 response: { mintAddress: { usdPrice: number } }
+          const p = j2?.[mint]?.usdPrice;
           if(typeof p==="number"&&p>0) result.crypto[meta.symbol] = p;
         });
-        console.log("✅ Jupiter fallback prices | SOL=$"+result.crypto.SOL);
+        console.log("✅ Jupiter v3 fallback prices | SOL=$"+result.crypto.SOL);
       }
-    }catch(e2){ console.warn("Jupiter fallback also failed:", e2.message); }
+    }catch(e2){ console.warn("Jupiter v3 fallback also failed:", e2.message); }
   }
 
   result.updatedAt = new Date().toLocaleTimeString();
@@ -1000,22 +1003,59 @@ const KNOWN_MINTS = {
 async function fetchJupiterPricesByMint(mints){
   const uniq = Array.from(new Set((mints||[]).filter(Boolean)));
   if(uniq.length===0) return {};
-  try{
-    // Jupiter v6 price API — handles all SPL tokens including LP tokens
-    const r=await fetch(`https://price.jup.ag/v6/price?ids=${uniq.join(",")}`,
-      { signal: AbortSignal.timeout(8000) });
-    if(!r.ok) throw new Error("HTTP "+r.status);
-    const j=await r.json();
-    const out={};
-    uniq.forEach(m=>{
-      const p=j?.data?.[m]?.price;
-      if(typeof p==="number"&&isFinite(p)&&p>0) out[m]=p;
-    });
-    return out;
-  }catch(e){
-    console.warn("Jupiter price fetch failed:",e.message);
-    return {};
+
+  // Jupiter Price API v3 (current) — replaces deprecated v6
+  // Endpoint: api.jup.ag/price/v3  |  Response field: usdPrice (not .price)
+  // Limit: 50 ids per request — batch if needed
+  const out = {};
+  const BATCH = 50;
+  for(let i=0; i<uniq.length; i+=BATCH){
+    const batch = uniq.slice(i, i+BATCH);
+    try{
+      const r = await fetch(
+        `https://api.jup.ag/price/v3?ids=${batch.join(",")}`,
+        { signal: AbortSignal.timeout(8000) }
+      );
+      if(!r.ok) throw new Error("HTTP "+r.status);
+      const j = await r.json();
+      // v3 response: { "mintAddress": { usdPrice: number, decimals: number, ... } }
+      batch.forEach(m=>{
+        const entry = j?.[m];
+        const p = entry?.usdPrice;
+        if(typeof p==="number" && isFinite(p) && p>0) out[m]=p;
+      });
+    }catch(e){
+      console.warn("Jupiter price v3 batch failed:", e.message);
+      // Fallback: try CoinGecko for known symbols in this batch
+      try{
+        const knownInBatch = batch
+          .map(m=>KNOWN_MINTS[m])
+          .filter(Boolean)
+          .map(meta=>meta.symbol)
+          .filter(sym=>COINGECKO_IDS[sym]);
+        if(knownInBatch.length>0){
+          const cgIds = knownInBatch.map(sym=>COINGECKO_IDS[sym]).join(",");
+          const cgr = await fetch(
+            `https://api.coingecko.com/api/v3/simple/price?ids=${cgIds}&vs_currencies=usd`,
+            { signal: AbortSignal.timeout(6000) }
+          );
+          if(cgr.ok){
+            const cgj = await cgr.json();
+            batch.forEach(m=>{
+              const meta = KNOWN_MINTS[m];
+              if(!meta) return;
+              const cgId = COINGECKO_IDS[meta.symbol];
+              const p = cgj?.[cgId]?.usd;
+              if(typeof p==="number" && isFinite(p) && p>0) out[m]=p;
+            });
+          }
+        }
+      }catch(cgErr){
+        console.warn("CoinGecko fallback also failed:", cgErr.message);
+      }
+    }
   }
+  return out;
 }
 
 // ── Token metadata: Jupiter strict list + all-tokens fallback + Metaplex on-chain ──
