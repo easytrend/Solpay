@@ -1502,16 +1502,24 @@ function App() {
     return()=>clearInterval(id);
   },[]);
 
-  // Auto-select first held token once balances load
+  // Auto-select first held token as soon as any tokens become available.
+  // Fires on splTokens (fast-pass) and solBalance changes, not on filteredTokens,
+  // to avoid the stale-closure race where filteredTokens hasn't re-run yet.
   React.useEffect(()=>{
-    if(!connected || walletLoading) return;
-    if(filteredTokens.length===0) return;
-    // If current selection isn't in the wallet, pick the first held token
-    const currentInWallet = filteredTokens.find(t=>(t.symbol||"").toUpperCase()===token.toUpperCase());
+    if(!connected) return;
+    // Build the same candidate list inline to avoid stale memo
+    const candidates = [];
+    if(solBalance !== null) candidates.push({symbol:"SOL"});
+    splTokens.forEach(t=>{ if(t.balance>0) candidates.push(t); });
+    if(candidates.length===0) return;
+    const currentInWallet = candidates.find(
+      t=>(t.symbol||"").toUpperCase()===token.toUpperCase()
+    );
     if(!currentInWallet) {
-      setToken(filteredTokens[0].symbol);
+      setToken(candidates[0].symbol);
     }
-  },[connected, walletLoading, filteredTokens]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[connected, splTokens, solBalance]);
   function getLiveCurrRate(code){
     const staticC=CURRENCIES.find(c=>c.code===code)||CURRENCIES[0];
     return liveRates.fiat[code]||staticC.rate;
@@ -1545,18 +1553,23 @@ function App() {
     return[solEntry,...splEntries];
   },[connected,solBalance,splTokens,liveRates]);
 
-  // Token list: only show held tokens when connected, alphabetically sorted
+  // Token list: only show held tokens when connected, alphabetically sorted.
+  // Depends on splTokens directly (not just walletTokenList) so it re-runs
+  // as soon as the fast-pass setSplTokens fires.
   const filteredTokens = React.useMemo(()=>{
-    // Before wallet connection: show nothing
-    if(!connected || !walletTokenList) return [];
-    
+    if(!connected) return [];
+
     const q = tokenQ.toLowerCase().trim();
-    // Only show tokens with balance > 0 (SOL always included if balance loaded)
-    const heldTokens = walletTokenList.filter(t => {
-      if(t.symbol === "SOL") return solBalance !== null; // SOL shown if balance loaded
-      return t.balance != null && t.balance > 0; // SPL tokens only if balance > 0
+
+    // Build the candidate list from walletTokenList (which includes SOL + SPL)
+    const candidates = walletTokenList || [];
+
+    // Only include tokens with a real balance
+    const heldTokens = candidates.filter(t => {
+      if(t.symbol === "SOL") return solBalance !== null && solBalance >= 0;
+      return typeof t.balance === "number" && t.balance > 0;
     });
-    
+
     const filtered = q
       ? heldTokens.filter(t=>
           (t.symbol||"").toLowerCase().includes(q) ||
@@ -1564,10 +1577,10 @@ function App() {
           (t.mint||"").toLowerCase().includes(q)
         )
       : heldTokens;
-    
-    // Alphabetical sort by symbol
+
     return [...filtered].sort((a,b)=>(a.symbol||"").localeCompare(b.symbol||""));
-  },[connected, walletTokenList, solBalance, tokenQ]);
+  // splTokens is listed explicitly so the memo re-runs on the fast-pass update
+  },[connected, walletTokenList, solBalance, splTokens, tokenQ]);
 
   // Find selected token — only from wallet list when connected
   const tok = connected && walletTokenList
@@ -1591,11 +1604,13 @@ function App() {
   async function fetchBalances(pubkey){
     setWalletLoading(true);setWalletError(null);
     try{
-      // SOL balance
+      // ── Step 1: SOL balance — fast, unblocks the token selector immediately ──
       const balRes=await rpcFetch("getBalance",[pubkey,{commitment:"confirmed"}]);
-      setSolBalance(balRes.value/1e9);
+      const solBal = balRes.value/1e9;
+      setSolBalance(solBal);
+      // walletLoading stays true — spinner shows while SPL tokens load
 
-      // SPL token accounts — both legacy Token Program and Token-2022
+      // ── Step 2: SPL token accounts — both programs in parallel ──
       const tokenQueries = await Promise.allSettled([
         rpcFetch("getTokenAccountsByOwner",[
           pubkey,
@@ -1612,7 +1627,7 @@ function App() {
         .filter(x=>x.status==="fulfilled")
         .flatMap(x=>(x.value&&x.value.value)||[]);
 
-      // Aggregate by mint — sum across multiple accounts for same mint
+      // ── Step 3: Parse token accounts into byMint map ──
       const byMint = {};
       tokenAccounts.forEach(a=>{
         try{
@@ -1623,8 +1638,6 @@ function App() {
           if(!tokenAmount) return;
 
           const uiAmount=readUiTokenAmount(tokenAmount);
-          // Include zero-balance accounts in the map but mark them
-          // (we filter >0 later; keeping them lets us show NFTs with supply=1)
           const decimals = Number(tokenAmount.decimals??0);
           const rawAmount = Number(tokenAmount.amount||0);
 
@@ -1642,13 +1655,12 @@ function App() {
               name:meta.name||("Token "+mint.slice(0,8)+"…"),
               price:meta.price||0,
               logo:meta.logo||null,
-              isNFT: decimals===0 && rawAmount===1, // likely NFT
+              isNFT: decimals===0 && rawAmount===1,
             };
           }
           byMint[mint].uiAmount  += uiAmount;
           byMint[mint].rawAmount += rawAmount;
           byMint[mint].balance    = byMint[mint].uiAmount;
-          // Re-evaluate NFT flag after aggregation
           byMint[mint].isNFT = byMint[mint].decimals===0 && byMint[mint].rawAmount===1;
         }catch(rowErr){
           console.warn("Token account parse error:", rowErr.message);
@@ -1657,13 +1669,34 @@ function App() {
 
       const raw = Object.values(byMint).filter(t=>t.uiAmount>0||t.rawAmount>0);
 
-      // Fetch prices and metadata in parallel
+      // ── Step 4: Emit a FAST first pass using only KNOWN_MINTS data ──
+      // This makes tokens appear immediately without waiting for Jupiter/Metaplex.
+      const fastToks = raw.map(t=>{
+        const known = KNOWN_MINTS[t.mint]||{};
+        return {
+          ...t,
+          price:  known.price||0,
+          logo:   known.logo||null,
+          symbol: known.symbol||t.symbol,
+          name:   known.name||t.name,
+          tokenType: t.isNFT?"nft":t.decimals===0?"fungible-no-dec":"unknown",
+        };
+      }).sort((a,b)=>{
+        const aVal=a.uiAmount*(a.price||0), bVal=b.uiAmount*(b.price||0);
+        if(bVal!==aVal) return bVal-aVal;
+        return (a.symbol||"").localeCompare(b.symbol||"");
+      });
+      // Publish fast pass — token selector becomes usable immediately
+      setSplTokens(fastToks);
+      setWalletLoading(false); // ← unblock UI now; metadata enrichment continues below
+
+      // ── Step 5: Enrich with Jupiter prices + metadata (background, non-blocking) ──
       const [mintPrices, mintMeta] = await Promise.all([
         fetchJupiterPricesByMint(raw.map(t=>t.mint)),
         fetchJupiterTokenMeta(raw.map(t=>t.mint))
       ]);
 
-      const toks = raw.map(t=>{
+      const enrichedToks = raw.map(t=>{
         const meta    = mintMeta[t.mint]||{};
         const known   = KNOWN_MINTS[t.mint]||{};
         const price   = mintPrices[t.mint]||known.price||0;
@@ -1687,27 +1720,27 @@ function App() {
           symbol,
           name,
           decimals,
-          // Tag token type for display
           tokenType: t.isNFT ? "nft"
             : decimals===0 ? "fungible-no-dec"
             : price===0    ? "unknown"
             : "fungible",
         };
-      })
-      // Sort: fungible with price first (by USD value desc), then unknown, then NFTs
-      .sort((a,b)=>{
-        const aVal = a.uiAmount*(a.price||0);
-        const bVal = b.uiAmount*(b.price||0);
+      }).sort((a,b)=>{
+        const aVal=a.uiAmount*(a.price||0), bVal=b.uiAmount*(b.price||0);
         if(bVal!==aVal) return bVal-aVal;
         return (a.symbol||"").localeCompare(b.symbol||"");
       });
 
-      setSplTokens(toks);
+      // Publish enriched pass — prices and logos update silently
+      setSplTokens(enrichedToks);
+
     }catch(e){
       setWalletError(e.message||"RPC error — check your connection and try again");
       console.error("fetchBalances error:", e);
+      setWalletLoading(false);
     }
-    setWalletLoading(false);
+    // Note: setWalletLoading(false) is called after fast pass above,
+    // so we only need it here in the catch path.
   }
 
   // Track the active provider reference so send functions use the right one
@@ -2121,10 +2154,6 @@ function App() {
       <div className="main">
         <div className="app-card">
           <div className="card-body">
-            {/* Tab Navigation — Send only */}
-            <div className="tabs" style={{marginBottom:"1.2rem"}}>
-              <button className="tab-btn active">Send</button>
-            </div>
 
             {/* ── PRE-CONNECTION GATE ── */}
             {!connected ? (
@@ -2166,16 +2195,16 @@ function App() {
                 {/* Token selector */}
                 <div className="field">
                   <div className="field-label">Select Token</div>
-                  {walletLoading && !tokLive ? (
+                  {walletLoading && filteredTokens.length === 0 ? (
                     <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",background:"rgba(255,255,255,0.04)",border:"1.5px solid var(--border)",borderRadius:11}}>
                       <div className="spin"/>
                       <span style={{fontSize:13,color:"var(--text3)"}}>Loading your tokens…</span>
                     </div>
-                  ) : walletError && !tokLive ? (
+                  ) : walletError && filteredTokens.length === 0 ? (
                     <div style={{padding:"10px 14px",background:"rgba(248,113,113,0.08)",border:"1px solid rgba(248,113,113,0.25)",borderRadius:11,fontSize:12,color:"var(--red)"}}>
                       ⚠ Failed to load tokens — <button onClick={()=>fetchBalances(walletPubkey)} style={{background:"none",border:"none",color:"var(--lime)",cursor:"pointer",fontSize:12,fontWeight:600}}>retry</button>
                     </div>
-                  ) : filteredTokens.length === 0 && !walletLoading ? (
+                  ) : filteredTokens.length === 0 && !walletLoading && solBalance !== null ? (
                     <div style={{padding:"12px 14px",background:"rgba(255,255,255,0.04)",border:"1.5px solid var(--border)",borderRadius:11,fontSize:13,color:"var(--text3)",textAlign:"center"}}>
                       No tokens found in this wallet
                     </div>
