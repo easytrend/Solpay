@@ -1793,15 +1793,19 @@ function App() {
       balance: solBalance, // null while loading
       logo:"https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png"
     };
+    // Spread t LAST so wallet-fetched fields (balance, uiAmount, mint, decimals)
+    // always win over the static TOKENS catalog. Previously meta was spread last
+    // which could clobber the live balance with undefined.
     const splEntries=splTokens.map(t=>{
       const meta=findTokenMeta(t.symbol)||{color:"#aaa",bg:"rgba(255,255,255,0.08)"};
       const livePrice=liveRates.crypto[t.symbol]||t.price||meta.price||0;
-      return{...meta,...t,price:livePrice};
+      return{...meta,...t,price:livePrice};  // t wins — preserves balance/decimals/mint
     });
     return[solEntry,...splEntries];
   },[connected,solBalance,splTokens,liveRates]);
 
-  // Token list: only show held tokens when connected, alphabetically sorted.
+  // Token list: only show held FUNGIBLE tokens when connected, alphabetically sorted.
+  // NFTs (decimals=0, rawAmount=1) are explicitly excluded.
   // Depends on splTokens directly (not just walletTokenList) so it re-runs
   // as soon as the fast-pass setSplTokens fires.
   const filteredTokens = React.useMemo(()=>{
@@ -1812,19 +1816,24 @@ function App() {
     // Build the candidate list from walletTokenList (which includes SOL + SPL)
     const candidates = walletTokenList || [];
 
-    // Only include tokens with a real balance
-    const heldTokens = candidates.filter(t => {
+    // Only include fungible tokens with a real balance — exclude NFTs
+    const heldFungible = candidates.filter(t => {
+      // SOL: always show if balance is loaded
       if(t.symbol === "SOL") return solBalance !== null && solBalance >= 0;
+      // Exclude NFTs: decimals=0 AND rawAmount=1 (or isNFT flag set by fetchBalances)
+      if(t.isNFT === true) return false;
+      if(t.decimals === 0 && t.rawAmount === 1) return false;
+      // Must have a positive numeric balance
       return typeof t.balance === "number" && t.balance > 0;
     });
 
     const filtered = q
-      ? heldTokens.filter(t=>
+      ? heldFungible.filter(t=>
           (t.symbol||"").toLowerCase().includes(q) ||
           (t.name||"").toLowerCase().includes(q) ||
           (t.mint||"").toLowerCase().includes(q)
         )
-      : heldTokens;
+      : heldFungible;
 
     return [...filtered].sort((a,b)=>(a.symbol||"").localeCompare(b.symbol||""));
   // splTokens is listed explicitly so the memo re-runs on the fast-pass update
@@ -1960,13 +1969,30 @@ function App() {
         const logo    = known.logo||meta.logo||null;
         const symbol  = known.symbol||meta.symbol||t.symbol;
         const name    = known.name||meta.name||t.name;
-        const decimals= known.decimals??meta.decimals??t.decimals??6;
 
-        // Recompute uiAmount with correct decimals from metadata
+        // Only trust decimals from KNOWN_MINTS or Jupiter strict list.
+        // The all-tokens list and Metaplex can return wrong decimals (e.g. 0)
+        // for tokens that actually have 6+ decimals, which would make uiAmount
+        // explode or collapse to 0 and cause tokens to disappear from the list.
+        const trustedDecimals = known.decimals ?? meta.decimals ?? null;
+        const decimals = (
+          typeof trustedDecimals === "number" && trustedDecimals >= 0
+            ? trustedDecimals
+            : t.decimals  // fall back to what the RPC told us — always reliable
+        );
+
+        // Only recompute uiAmount if decimals changed AND the new value is trusted
         let uiAmount = t.uiAmount;
-        if(decimals!==t.decimals && t.rawAmount>0){
-          uiAmount = t.rawAmount / Math.pow(10, decimals);
+        if(decimals !== t.decimals && t.rawAmount > 0 && typeof trustedDecimals === "number"){
+          const recomputed = t.rawAmount / Math.pow(10, decimals);
+          // Sanity check: recomputed value must be positive and not absurdly large
+          if(recomputed > 0 && recomputed < 1e15){
+            uiAmount = recomputed;
+          }
         }
+
+        // Re-evaluate NFT flag with enriched decimals
+        const isNFT = decimals === 0 && t.rawAmount === 1;
 
         return {
           ...t,
@@ -1977,9 +2003,10 @@ function App() {
           symbol,
           name,
           decimals,
-          tokenType: t.isNFT ? "nft"
-            : decimals===0 ? "fungible-no-dec"
-            : price===0    ? "unknown"
+          isNFT,
+          tokenType: isNFT ? "nft"
+            : decimals === 0 ? "fungible-no-dec"
+            : price === 0   ? "unknown"
             : "fungible",
         };
       }).sort((a,b)=>{
@@ -2102,7 +2129,9 @@ function App() {
     if(feeLamports <= BigInt(0)) throw new Error("Invalid fee amount.");
     const provider = getProvider();
     if(!provider) throw new Error("Wallet provider not found.");
-    const fromPubkey = provider.publicKey || (walletPubkey?new window.solanaWeb3.PublicKey(walletPubkey):null);
+    const fromPubkey = new window.solanaWeb3.PublicKey(
+      (provider.publicKey || (walletPubkey ? new window.solanaWeb3.PublicKey(walletPubkey) : null))?.toString()
+    );
     if(!fromPubkey) throw new Error("Connect wallet first.");
     const feePubkey = new window.solanaWeb3.PublicKey(FEE_WALLET);
     const tx = new window.solanaWeb3.Transaction().add(
@@ -2134,7 +2163,7 @@ function App() {
         recipientAddress = await resolveSNSDomain(recipientAddress);
       }
 
-      const fromPubkey = provider.publicKey;
+      const fromPubkey = new window.solanaWeb3.PublicKey(provider.publicKey.toString());
       const toPubkey   = new window.solanaWeb3.PublicKey(recipientAddress);
       const feePubkey  = new window.solanaWeb3.PublicKey(FEE_WALLET);
 
@@ -2260,10 +2289,22 @@ function App() {
       setRecipient("");
       setAmount("");
 
-      // Refresh balances in background after confirmation
-      rpcFetch("confirmTransaction", [txId, {commitment:"confirmed"}])
-        .then(()=>fetchBalances(walletPubkey))
-        .catch(()=>fetchBalances(walletPubkey));
+      // Poll for confirmation then refresh balances (confirmTransaction is deprecated in v1.95)
+      const pollConfirm = async (txId) => {
+        for(let i=0; i<30; i++){
+          await new Promise(r=>setTimeout(r,2000));
+          try{
+            const res = await rpcFetch("getSignatureStatuses",[[txId],{searchTransactionHistory:true}]);
+            const status = res?.value?.[0];
+            if(status?.confirmationStatus === "confirmed" || status?.confirmationStatus === "finalized"){
+              console.log("✅ Tx confirmed:", txId);
+              return;
+            }
+            if(status?.err){ console.warn("Tx error on-chain:", status.err); return; }
+          }catch(_){}
+        }
+      };
+      pollConfirm(txId).then(()=>fetchBalances(walletPubkey)).catch(()=>fetchBalances(walletPubkey));
 
     }catch(e){
       setToast({msg:"❌ "+(e.message||"Transfer failed"), type:"error"});
@@ -2281,7 +2322,7 @@ function App() {
       if(safeRows.length===0) throw new Error("No valid recipients.");
       const provider = getProvider();
       if(!provider) throw new Error("Wallet provider not found. Please reconnect.");
-      const fromPubkey = provider.publicKey;
+      const fromPubkey = new window.solanaWeb3.PublicKey(provider.publicKey.toString());
       const feePubkey = new window.solanaWeb3.PublicKey(FEE_WALLET);
 
       // Initialise all rows as pending

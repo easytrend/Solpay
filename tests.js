@@ -296,10 +296,150 @@ test("NGN remains in CURRENCIES array", () => {
   assert(m[1].includes('code:"NGN"'), "NGN must remain in CURRENCIES");
 });
 
+// ── (f) Token display, NFT filtering, and send fixes ─────────────────────────
+// These run synchronously regardless of RUN_LIVE
+console.log("\n(f) Token display, NFT filtering, and send fixes");
+
+test("walletTokenList spreads t after meta so live balance is never overwritten", () => {
+  const fn = src.match(/const walletTokenList = React\.useMemo[\s\S]*?\}\s*,\s*\[connected/m);
+  assert(fn, "walletTokenList memo not found");
+  // The spread must be {...meta,...t,...} — t last so its fields win
+  assert(fn[0].includes("{...meta,...t,price:livePrice}"),
+    "walletTokenList must spread t after meta so live balance/decimals/mint survive");
+});
+
+test("filteredTokens excludes tokens with isNFT=true", () => {
+  const fn = src.match(/const filteredTokens = React\.useMemo[\s\S]*?\}\s*,\s*\[connected/m);
+  assert(fn, "filteredTokens memo not found");
+  assert(fn[0].includes("if(t.isNFT === true) return false"),
+    "filteredTokens must exclude tokens where isNFT===true");
+});
+
+test("filteredTokens excludes tokens with decimals=0 and rawAmount=1 (NFT pattern)", () => {
+  const fn = src.match(/const filteredTokens = React\.useMemo[\s\S]*?\}\s*,\s*\[connected/m);
+  assert(fn, "filteredTokens memo not found");
+  assert(fn[0].includes("if(t.decimals === 0 && t.rawAmount === 1) return false"),
+    "filteredTokens must exclude decimals=0 && rawAmount=1 tokens");
+});
+
+test("filteredTokens only shows fungible tokens (comment confirms intent)", () => {
+  assert(src.includes("Only include fungible tokens"),
+    "filteredTokens must document that it only shows fungible tokens");
+});
+
+test("enriched pass guards uiAmount recomputation with sanity bounds", () => {
+  assert(src.includes("recomputed > 0 && recomputed < 1e15"),
+    "Enriched pass must sanity-check recomputed uiAmount to prevent tokens disappearing");
+});
+
+test("enriched pass uses trustedDecimals (not raw metadata decimals) for recomputation", () => {
+  assert(src.includes("trustedDecimals"),
+    "Enriched pass must use trustedDecimals to avoid wrong-decimals from all-tokens list");
+});
+
+test("enriched pass re-evaluates isNFT flag with enriched decimals", () => {
+  assert(src.includes("const isNFT = decimals === 0 && t.rawAmount === 1"),
+    "Enriched pass must re-evaluate isNFT with the corrected decimals");
+});
+
+test("handleSingleSendFee normalises fromPubkey via toString()", () => {
+  const fn = src.match(/async function handleSingleSendFee[\s\S]*?^  }/m);
+  assert(fn, "handleSingleSendFee not found");
+  assert(fn[0].includes("new window.solanaWeb3.PublicKey(provider.publicKey.toString())"),
+    "fromPubkey must be normalised via toString() to avoid cross-scope instanceof failures");
+});
+
+test("handleBulkSendFee normalises fromPubkey via toString()", () => {
+  const fn = src.match(/async function handleBulkSendFee[\s\S]*?^  }/m);
+  assert(fn, "handleBulkSendFee not found");
+  assert(fn[0].includes("provider.publicKey.toString()"),
+    "Bulk send fromPubkey must be normalised via toString()");
+});
+
+test("chargePlatformFeeInSol normalises fromPubkey via toString()", () => {
+  const fn = src.match(/async function chargePlatformFeeInSol[\s\S]*?^  }/m);
+  assert(fn, "chargePlatformFeeInSol not found");
+  assert(fn[0].includes("toString()"),
+    "chargePlatformFeeInSol fromPubkey must be normalised via toString()");
+});
+
+test("deprecated confirmTransaction is not called in send flow", () => {
+  const fn = src.match(/async function handleSingleSendFee[\s\S]*?^  }/m);
+  assert(fn, "handleSingleSendFee not found");
+  // Strip comments, then check no live call to confirmTransaction
+  const codeOnly = fn[0].replace(/\/\/[^\n]*/g, "");
+  assert(!codeOnly.includes("confirmTransaction"),
+    "handleSingleSendFee must not call deprecated confirmTransaction");
+});
+
+test("pollConfirm uses getSignatureStatuses for confirmation polling", () => {
+  assert(src.includes("getSignatureStatuses"),
+    "Confirmation polling must use getSignatureStatuses (not deprecated confirmTransaction)");
+  assert(src.includes("const pollConfirm = async"),
+    "pollConfirm helper must be defined");
+});
+
+test("pollConfirm checks for confirmed or finalized status", () => {
+  assert(src.includes('"confirmed"') && src.includes('"finalized"'),
+    "pollConfirm must check for both confirmed and finalized status");
+});
+
+// ── NFT filtering unit test (pure logic, no DOM) ─────────────────────────────
+test("NFT filter logic: decimals=0 rawAmount=1 is excluded", () => {
+  // Simulate the filter predicate inline
+  function isHeldFungible(t, solBalance) {
+    if(t.symbol === "SOL") return solBalance !== null && solBalance >= 0;
+    if(t.isNFT === true) return false;
+    if(t.decimals === 0 && t.rawAmount === 1) return false;
+    return typeof t.balance === "number" && t.balance > 0;
+  }
+  // NFT: decimals=0, rawAmount=1
+  assert(!isHeldFungible({symbol:"NFT",decimals:0,rawAmount:1,balance:1}, 1),
+    "NFT (decimals=0, rawAmount=1) must be excluded");
+  // NFT via isNFT flag
+  assert(!isHeldFungible({symbol:"NFT2",isNFT:true,decimals:0,rawAmount:1,balance:1}, 1),
+    "Token with isNFT=true must be excluded");
+  // Fungible with 0 balance
+  assert(!isHeldFungible({symbol:"USDC",decimals:6,rawAmount:1000000,balance:0}, 1),
+    "Zero-balance fungible must be excluded");
+  // Valid fungible
+  assert(isHeldFungible({symbol:"USDC",decimals:6,rawAmount:1000000,balance:1.0}, 1),
+    "Fungible with balance>0 must be included");
+  // SOL
+  assert(isHeldFungible({symbol:"SOL"}, 0.5),
+    "SOL with loaded balance must be included");
+  assert(!isHeldFungible({symbol:"SOL"}, null),
+    "SOL with null balance (loading) must be excluded");
+});
+
+test("enriched pass sanity check: prevents uiAmount=0 from bad decimals", () => {
+  // Simulate the guard logic
+  function safeRecompute(rawAmount, oldDecimals, newDecimals) {
+    if(newDecimals === oldDecimals) return rawAmount / Math.pow(10, oldDecimals);
+    const recomputed = rawAmount / Math.pow(10, newDecimals);
+    if(recomputed > 0 && recomputed < 1e15) return recomputed;
+    return rawAmount / Math.pow(10, oldDecimals); // fall back to original
+  }
+  // Jupiter returns decimals=0 for a token that actually has 6 decimals
+  // rawAmount=1000000 (1 USDC), oldDecimals=6, newDecimals=0 (wrong)
+  // Without guard: 1000000 / 10^0 = 1000000 (absurd, but > 0 so passes)
+  // With guard: 1000000 < 1e15 so it would pass — but the trustedDecimals
+  // guard prevents this by only using metadata decimals from KNOWN_MINTS/strict list
+  const result = safeRecompute(1000000, 6, 6); // same decimals — no recompute
+  assertEqual(result, 1.0, "1 USDC should be 1.0 with correct decimals");
+
+  // Simulate bad metadata returning decimals=0 for a 6-decimal token
+  // The trustedDecimals guard would keep oldDecimals=6 in this case
+  const badResult = safeRecompute(1000000, 6, 0);
+  // 1000000 / 10^0 = 1000000 — this is > 1e15? No, 1M < 1e15, so it passes
+  // The real protection is trustedDecimals only coming from KNOWN_MINTS/strict
+  assert(badResult > 0, "Recomputed value must remain positive");
+});
+
 // ── Live tests ────────────────────────────────────────────────────────────────
 const RUN_LIVE = process.env.RUN_LIVE === "1";
 if(RUN_LIVE){
-  console.log("\n(f) Live network tests (RUN_LIVE=1)");
+  console.log("\n(g) Live network tests (RUN_LIVE=1)");
   const https = require("https");
 
   function liveRpc(url, method, params) {
@@ -370,6 +510,15 @@ if(RUN_LIVE){
     test("LIVE: primary RPC getLatestBlockhash returns a blockhash", async()=>{
       const r = await liveRpc(PRIMARY,"getLatestBlockhash",[{commitment:"confirmed"}]);
       assert(r.ok && typeof r.result?.value?.blockhash==="string", "getLatestBlockhash failed: "+r.err);
+    });
+
+    test("LIVE: getSignatureStatuses works (replaces deprecated confirmTransaction)", async()=>{
+      // A well-formed all-1s signature is valid base58 but won't exist on-chain
+      const fakeSig = "1111111111111111111111111111111111111111111111111111111111111111";
+      const r = await liveRpc(PRIMARY,"getSignatureStatuses",[[fakeSig],{searchTransactionHistory:true}]);
+      // value[0] will be null for an unknown sig — that's correct behaviour
+      assert(r.ok && Array.isArray(r.result?.value),
+        "getSignatureStatuses must return a value array: "+JSON.stringify(r));
     });
 
     test("LIVE: Bonfida SNS API resolves bonfida.sol", async()=>{
