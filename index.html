@@ -522,6 +522,30 @@ function toLamports(solAmount){
   return Math.ceil((Number(solAmount)||0)*LAMPORTS_PER_SOL);
 }
 
+// ── Safe u64 little-endian encoder ──────────────────────────────────────────
+// @solana/web3.js v1.x borsh serialiser requires lamports as BigInt for values
+// that exceed 2^32 (≈ 4.29 SOL). Passing a plain JS number causes the error:
+//   "Bob.encode[lamports] requires [length 8] Uint8Array as src"
+// We always pass BigInt to SystemProgram.transfer to avoid this entirely.
+function lamportsToBigInt(solAmount) {
+  const n = Math.ceil((Number(solAmount) || 0) * LAMPORTS_PER_SOL);
+  if (!isFinite(n) || n < 0) return BigInt(0);
+  return BigInt(Math.floor(n));
+}
+
+// Encode a JS number as an 8-byte little-endian Uint8Array (u64).
+// Used for SPL token transfer instruction data.
+function encodeU64LE(value) {
+  const buf  = new Uint8Array(8);
+  const view = new DataView(buf.buffer);
+  // Split into two 32-bit halves to avoid BigInt dependency in older browsers
+  const lo = value >>> 0;                        // lower 32 bits
+  const hi = Math.floor(value / 0x100000000);    // upper 32 bits
+  view.setUint32(0, lo, true);
+  view.setUint32(4, hi, true);
+  return buf;
+}
+
 function computeFeeSolFromTokenAmount(tokenAmount, tokenUsdPrice, solUsdPrice){
   const safeTokenAmount = Number(tokenAmount)||0;
   const safeTokenUsd = Number(tokenUsdPrice)||0;
@@ -1314,48 +1338,129 @@ function readUiTokenAmount(tokenAmount){
   return amt / Math.pow(10, dec);
 }
 
-// ── SNS Domain Resolution ──
-function isValidSolanaAddress(address){
-  try{
-    const pubkey=new window.solanaWeb3.PublicKey(address);
-    return window.solanaWeb3.PublicKey.isOnCurve(pubkey.toBytes());
-  }catch{
+// ── SNS Domain Resolution ──────────────────────────────────────────────────
+//
+// Bonfida SNS on-chain layout:
+//   PDA seeds: [sha256("\x00" + name), nameClass (32 zero bytes), parentAccount]
+//   Account data: [parent_name(32), owner(32), class(32), data...]
+//   Owner is at bytes [32..64]
+//
+// Fallback: if on-chain lookup fails, try the Bonfida REST API which is more
+// reliable from browsers (no rate-limit issues with getAccountInfo).
+//
+const SNS_PROGRAM_ID_STR = "namesLPneVptA9Z5rqUDD9tMTWEJwofgaYwp8cawRkX";
+const SNS_ROOT_DOMAIN_STR = "58PwtjSDuFHuUkYjH9BYnnQKHfwo9reZhC2zMJv9JPkx";
+
+function isValidSolanaAddress(address) {
+  if (!address || typeof address !== "string") return false;
+  // Base58 addresses are 32–44 chars; PublicKey constructor validates the rest
+  if (address.length < 32 || address.length > 44) return false;
+  try {
+    const pk = new window.solanaWeb3.PublicKey(address);
+    // isOnCurve rejects program-derived addresses that aren't valid ed25519 points
+    // We accept all valid base58 public keys (including PDAs) as send targets
+    return true;
+  } catch {
     return false;
   }
 }
 
-async function resolveSNSDomain(domain){
-  const cleaned=domain.toLowerCase().replace('.sol','').trim();
-  if(isValidSolanaAddress(cleaned)) return cleaned;
-  
-  try{
-    const SNS_PROGRAM_ID=new window.solanaWeb3.PublicKey('namesLPneVptA9Z5rqUDD9tMTWEJwofgaYwp8cawRkX');
-    const ROOT_DOMAIN=new window.solanaWeb3.PublicKey('58PwtjSDuFHuUkYjH9BYnnQKHfwo9reZhC2zMJv9JPkx');
-    
-    const input='\0'+cleaned;
-    const buffer=new TextEncoder().encode(input);
-    const hashBuffer=await window.crypto.subtle.digest('SHA-256',buffer);
-    const hashedName=new Uint8Array(hashBuffer);
-    
-    const [nameAccountKey]=await window.solanaWeb3.PublicKey.findProgramAddress(
-      [hashedName,new Uint8Array(32),ROOT_DOMAIN.toBytes()],
+async function resolveSNSDomain(domain) {
+  const raw = domain.trim();
+
+  // Already a valid wallet address — return as-is
+  if (isValidSolanaAddress(raw)) return raw;
+
+  // Strip .sol suffix and normalise
+  const name = raw.toLowerCase().replace(/\.sol$/i, "").trim();
+  if (!name) throw new Error("Empty domain name");
+
+  // ── Method 1: Bonfida REST API (preferred — no RPC rate-limit issues) ──
+  try {
+    const r = await fetch(
+      `https://sns-sdk-proxy.bonfida.workers.dev/resolve/${encodeURIComponent(name)}`,
+      { signal: AbortSignal.timeout(8000) }
+    );
+    if (r.ok) {
+      const j = await r.json();
+      // Response: { s: "ok", result: "base58address" }
+      if (j?.s === "ok" && j?.result && isValidSolanaAddress(j.result)) {
+        console.log("✅ SNS resolved via Bonfida API:", name, "→", j.result);
+        return j.result;
+      }
+      if (j?.s === "error") {
+        throw new Error(j.result || "Domain not registered");
+      }
+    }
+  } catch (apiErr) {
+    // Only re-throw if it's a "domain not found" error, not a network error
+    if (apiErr.message && (
+      apiErr.message.includes("not registered") ||
+      apiErr.message.includes("Domain not found") ||
+      apiErr.message.includes("Invalid domain")
+    )) {
+      throw new Error(`The domain "${name}.sol" is not registered on Solana Name Service.`);
+    }
+    console.warn("Bonfida API failed, trying on-chain fallback:", apiErr.message);
+  }
+
+  // ── Method 2: On-chain PDA lookup (fallback) ──
+  try {
+    const SNS_PROGRAM_ID = new window.solanaWeb3.PublicKey(SNS_PROGRAM_ID_STR);
+    const ROOT_DOMAIN    = new window.solanaWeb3.PublicKey(SNS_ROOT_DOMAIN_STR);
+
+    // Hash: sha256("\x00" + name)
+    const input      = "\x00" + name;
+    const encoded    = new TextEncoder().encode(input);
+    const hashBuf    = await window.crypto.subtle.digest("SHA-256", encoded);
+    const hashedName = new Uint8Array(hashBuf);
+
+    const [nameAccountKey] = await window.solanaWeb3.PublicKey.findProgramAddress(
+      [hashedName, new Uint8Array(32), ROOT_DOMAIN.toBytes()],
       SNS_PROGRAM_ID
     );
-    
-    const accountInfo=await rpcFetch("getAccountInfo",[nameAccountKey.toBase58(),{encoding:"base64"}]);
-    if(!accountInfo||!accountInfo.value) throw new Error("Domain not found");
-    
-    // Decode base64 account data
-    const b64=accountInfo.value.data[0];
-    const binary=atob(b64);
-    const bytes=new Uint8Array(binary.length);
-    for(let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
-    const ownerBytes=bytes.slice(32,64);
-    const owner=new window.solanaWeb3.PublicKey(ownerBytes);
-    return owner.toBase58();
-  }catch(e){
-    console.error('SNS resolution failed:',e);
-    throw new Error('Could not resolve .sol domain');
+
+    const accountInfo = await rpcFetch("getAccountInfo",
+      [nameAccountKey.toBase58(), { encoding: "base64" }]);
+
+    if (!accountInfo?.value?.data?.[0]) {
+      throw new Error(`The domain "${name}.sol" is not registered on Solana Name Service.`);
+    }
+
+    // Decode: owner is at bytes [32..64] of the account data
+    const b64    = accountInfo.value.data[0];
+    const binary = atob(b64);
+    const bytes  = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+    if (bytes.length < 64) {
+      throw new Error("SNS account data too short — domain may be malformed.");
+    }
+
+    const ownerBytes = bytes.slice(32, 64);
+    const owner      = new window.solanaWeb3.PublicKey(ownerBytes);
+    const ownerStr   = owner.toBase58();
+
+    if (!isValidSolanaAddress(ownerStr)) {
+      throw new Error("SNS account returned an invalid owner address.");
+    }
+
+    console.log("✅ SNS resolved on-chain:", name, "→", ownerStr);
+    return ownerStr;
+
+  } catch (onChainErr) {
+    console.error("SNS on-chain resolution failed:", onChainErr.message);
+    // Surface a clear, actionable error message
+    if (onChainErr.message.includes("not registered") ||
+        onChainErr.message.includes("too short") ||
+        onChainErr.message.includes("invalid owner")) {
+      throw onChainErr;
+    }
+    throw new Error(
+      `Could not resolve "${name}.sol". ` +
+      `Verify the domain is registered at https://naming.bonfida.org and try again. ` +
+      `(Detail: ${onChainErr.message})`
+    );
   }
 }
 
@@ -1993,8 +2098,8 @@ function App() {
   },[]);
 
   async function chargePlatformFeeInSol(totalFeeSol, reason){
-    const feeLamports = toLamports(totalFeeSol);
-    if(feeLamports<=0) throw new Error("Invalid fee amount.");
+    const feeLamports = lamportsToBigInt(totalFeeSol);
+    if(feeLamports <= BigInt(0)) throw new Error("Invalid fee amount.");
     const provider = getProvider();
     if(!provider) throw new Error("Wallet provider not found.");
     const fromPubkey = provider.publicKey || (walletPubkey?new window.solanaWeb3.PublicKey(walletPubkey):null);
@@ -2004,13 +2109,13 @@ function App() {
       window.solanaWeb3.SystemProgram.transfer({
         fromPubkey,
         toPubkey: feePubkey,
-        lamports: feeLamports
+        lamports: feeLamports,
       })
     );
     const sig = await provider.signAndSendTransaction(tx);
     const txId = sig?.signature || sig;
     if(!txId) throw new Error("Fee transaction was not confirmed by wallet.");
-    console.log("✅ Platform fee paid:", reason, txId, "lamports:", feeLamports);
+    console.log("✅ Platform fee paid:", reason, txId, "lamports:", feeLamports.toString());
     return txId;
   }
 
@@ -2022,45 +2127,64 @@ function App() {
       const provider=getProvider();
       if(!provider) throw new Error("Wallet provider not found. Please reconnect.");
 
-      // Resolve recipient address (supports .sol domains and raw addresses)
+      // ── 1. Resolve recipient ──────────────────────────────────────────────
       let recipientAddress = recipient.trim();
-      if(recipientAddress.endsWith(".sol")||!isValidSolanaAddress(recipientAddress)){
-        // Try SNS resolution
-        try{
-          recipientAddress = await resolveSNSDomain(recipientAddress);
-          if(!recipientAddress) throw new Error("Domain not found");
-        }catch(e){
-          throw new Error("Could not resolve '"+recipient+"' — check the .sol domain or wallet address.");
-        }
+      if(!isValidSolanaAddress(recipientAddress)){
+        // Treat as .sol domain (with or without the suffix)
+        recipientAddress = await resolveSNSDomain(recipientAddress);
       }
 
       const fromPubkey = provider.publicKey;
-      const toPubkey = new window.solanaWeb3.PublicKey(recipientAddress);
-      const feePubkey = new window.solanaWeb3.PublicKey(FEE_WALLET);
+      const toPubkey   = new window.solanaWeb3.PublicKey(recipientAddress);
+      const feePubkey  = new window.solanaWeb3.PublicKey(FEE_WALLET);
 
-      // Calculate amounts
+      // ── 2. Validate token selection ───────────────────────────────────────
+      if(!tokLive) throw new Error("No token selected. Please select a token first.");
+
       const tokenAmount = tokAmt;
-      const feeSol = computeFeeSolFromTokenAmount(tokenAmount, tokLive.price, liveSolPrice);
+      if(!(tokenAmount > 0)) throw new Error("Amount must be greater than zero.");
 
-      let tx = new window.solanaWeb3.Transaction();
+      const feeSol     = computeFeeSolFromTokenAmount(tokenAmount, tokLive.price, liveSolPrice);
+      let   tx         = new window.solanaWeb3.Transaction();
 
-      if(tokLive.symbol==="SOL"){
-        // SOL transfer
-        const lamports = toLamports(tokenAmount);
-        if(lamports<=0) throw new Error("Amount too small.");
+      // ── 3. Build transfer instruction ─────────────────────────────────────
+      if(tokLive.symbol === "SOL"){
+        // SOL transfer — use BigInt lamports to avoid borsh u64 encoding error
+        const lamports = lamportsToBigInt(tokenAmount);
+        if(lamports <= BigInt(0)) throw new Error("Amount too small (minimum ~0.000000001 SOL).");
         tx.add(window.solanaWeb3.SystemProgram.transfer({
-          fromPubkey, toPubkey, lamports
+          fromPubkey,
+          toPubkey,
+          lamports,   // BigInt — required by web3.js v1.95 borsh encoder
         }));
+
       } else {
         // SPL Token transfer
         const mintAddress = tokLive.mint;
-        if(!mintAddress) throw new Error("Token mint address not found. Please select a token from your wallet.");
+        if(!mintAddress) {
+          throw new Error(
+            `Cannot send ${tokLive.symbol}: mint address is missing. ` +
+            `This token may not have loaded fully — try refreshing your wallet.`
+          );
+        }
 
-        const TOKEN_PROGRAM_ID = new window.solanaWeb3.PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+        // Use the decimals from the token metadata (critical for correct amounts)
+        // Fallback chain: tokLive.decimals → KNOWN_MINTS → 6 (USDC/USDT default)
+        const knownMintMeta = KNOWN_MINTS[mintAddress];
+        const decimals = (
+          typeof tokLive.decimals === "number" ? tokLive.decimals :
+          typeof knownMintMeta?.decimals === "number" ? knownMintMeta.decimals :
+          6
+        );
+
+        const rawAmount = Math.floor(tokenAmount * Math.pow(10, decimals));
+        if(rawAmount <= 0) throw new Error("Amount too small for this token's decimal precision.");
+
+        const TOKEN_PROGRAM_ID          = new window.solanaWeb3.PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
         const ASSOCIATED_TOKEN_PROGRAM_ID = new window.solanaWeb3.PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJe1bRS");
-        const mintPubkey = new window.solanaWeb3.PublicKey(mintAddress);
+        const mintPubkey                = new window.solanaWeb3.PublicKey(mintAddress);
 
-        // Find associated token accounts
+        // Derive associated token accounts
         const [fromATA] = await window.solanaWeb3.PublicKey.findProgramAddress(
           [fromPubkey.toBytes(), TOKEN_PROGRAM_ID.toBytes(), mintPubkey.toBytes()],
           ASSOCIATED_TOKEN_PROGRAM_ID
@@ -2070,84 +2194,77 @@ function App() {
           ASSOCIATED_TOKEN_PROGRAM_ID
         );
 
-        // Check if recipient ATA exists, if not create it
-        const rpcUrl = RPC_LIST[0];
-        const ataInfo = await rpcFetch("getAccountInfo",[toATA.toBase58(),{encoding:"base64"}]);
-        if(!ataInfo||!ataInfo.value){
-          // Create ATA for recipient
-          const createATAIx = {
+        // Create recipient ATA if it doesn't exist yet
+        const ataInfo = await rpcFetch("getAccountInfo", [toATA.toBase58(), {encoding:"base64"}]);
+        if(!ataInfo?.value){
+          tx.add({
             keys:[
-              {pubkey:fromPubkey, isSigner:true, isWritable:true},
-              {pubkey:toATA, isSigner:false, isWritable:true},
-              {pubkey:toPubkey, isSigner:false, isWritable:false},
-              {pubkey:mintPubkey, isSigner:false, isWritable:false},
+              {pubkey:fromPubkey,  isSigner:true,  isWritable:true},
+              {pubkey:toATA,       isSigner:false, isWritable:true},
+              {pubkey:toPubkey,    isSigner:false, isWritable:false},
+              {pubkey:mintPubkey,  isSigner:false, isWritable:false},
               {pubkey:new window.solanaWeb3.PublicKey("11111111111111111111111111111111"), isSigner:false, isWritable:false},
               {pubkey:TOKEN_PROGRAM_ID, isSigner:false, isWritable:false},
               {pubkey:new window.solanaWeb3.PublicKey("SysvarRent111111111111111111111111111111111"), isSigner:false, isWritable:false},
             ],
             programId: ASSOCIATED_TOKEN_PROGRAM_ID,
-            data: new Uint8Array(0)
-          };
-          tx.add(createATAIx);
+            data: new Uint8Array(0),
+          });
         }
 
-        // SPL Token transfer instruction
-        const decimals = tokLive.decimals||6;
-        const rawAmount = Math.floor(tokenAmount * Math.pow(10, decimals));
-        if(rawAmount<=0) throw new Error("Amount too small.");
-
-        // Build transfer instruction data: [3, amount as u64 LE]
-        const data = new Uint8Array(9);
-        data[0] = 3; // Transfer instruction
-        const view = new DataView(data.buffer);
-        // Write u64 little-endian (split into two u32 for JS compatibility)
-        view.setUint32(1, rawAmount & 0xFFFFFFFF, true);
-        view.setUint32(5, Math.floor(rawAmount / 0x100000000), true);
+        // SPL Token Transfer instruction (discriminator = 3)
+        // Layout: [u8 discriminator(1)] [u64 amount LE(8)] = 9 bytes total
+        const ixData = new Uint8Array(9);
+        ixData[0] = 3; // Transfer
+        ixData.set(encodeU64LE(rawAmount), 1);
 
         tx.add({
           keys:[
-            {pubkey:fromATA, isSigner:false, isWritable:true},
-            {pubkey:toATA, isSigner:false, isWritable:true},
-            {pubkey:fromPubkey, isSigner:true, isWritable:false},
+            {pubkey:fromATA,    isSigner:false, isWritable:true},
+            {pubkey:toATA,      isSigner:false, isWritable:true},
+            {pubkey:fromPubkey, isSigner:true,  isWritable:false},
           ],
           programId: TOKEN_PROGRAM_ID,
-          data
+          data: ixData,
         });
       }
 
-      // Add platform fee
-      const feeLamports = toLamports(feeSol);
-      if(feeLamports>0){
+      // ── 4. Platform fee (SOL) ─────────────────────────────────────────────
+      const feeLamports = lamportsToBigInt(feeSol);
+      if(feeLamports > BigInt(0)){
         tx.add(window.solanaWeb3.SystemProgram.transfer({
-          fromPubkey, toPubkey:feePubkey, lamports:feeLamports
+          fromPubkey,
+          toPubkey: feePubkey,
+          lamports: feeLamports,
         }));
       }
 
-      // Get recent blockhash
-      const bhResult = await rpcFetch("getLatestBlockhash",[{commitment:"confirmed"}]);
+      // ── 5. Blockhash + sign + send ────────────────────────────────────────
+      const bhResult = await rpcFetch("getLatestBlockhash", [{commitment:"confirmed"}]);
       tx.recentBlockhash = bhResult.value.blockhash;
-      tx.feePayer = fromPubkey;
+      tx.feePayer        = fromPubkey;
 
-      // Sign and send
-      const sig = await provider.signAndSendTransaction(tx);
-      const txId = sig?.signature || sig;
+      const sig   = await provider.signAndSendTransaction(tx);
+      const txId  = sig?.signature || sig;
       if(!txId) throw new Error("Transaction was not confirmed by wallet.");
 
-      // Show immediate success with Solscan link
-      const shortRecip = recipient.length>20 ? recipient.slice(0,8)+"…"+recipient.slice(-6) : recipient;
+      const shortRecip = recipient.length > 20
+        ? recipient.slice(0,8) + "…" + recipient.slice(-6)
+        : recipient;
       setToast({
-        msg:`✅ Sent ${fmtTok(tokenAmount)} ${tokLive.symbol} to ${shortRecip}`,
-        type:"success",
-        link:`https://solscan.io/tx/${txId}`,
-        linkLabel:"View on Solscan"
+        msg: `✅ Sent ${fmtTok(tokenAmount)} ${tokLive.symbol} to ${shortRecip}`,
+        type: "success",
+        link: `https://solscan.io/tx/${txId}`,
+        linkLabel: "View on Solscan",
       });
       setRecipient("");
-      setAmount("0");
+      setAmount("");
 
-      // Background: wait for confirmation then refresh balances
-      rpcFetch("confirmTransaction",[txId,{commitment:"confirmed"}])
+      // Refresh balances in background after confirmation
+      rpcFetch("confirmTransaction", [txId, {commitment:"confirmed"}])
         .then(()=>fetchBalances(walletPubkey))
-        .catch(()=>fetchBalances(walletPubkey)); // refresh even if confirm poll fails
+        .catch(()=>fetchBalances(walletPubkey));
+
     }catch(e){
       setToast({msg:"❌ "+(e.message||"Transfer failed"), type:"error"});
       console.error("Transfer failed:", e);
@@ -2184,9 +2301,9 @@ function App() {
 
           // Resolve recipient
           let recipientAddress=row.domain.trim();
-          if(recipientAddress.endsWith(".sol")||!isValidSolanaAddress(recipientAddress)){
+          if(!isValidSolanaAddress(recipientAddress)){
             try{ recipientAddress=await resolveSNSDomain(recipientAddress); }
-            catch(e){ throw new Error("Could not resolve: "+row.domain); }
+            catch(e){ throw new Error(e.message||"Could not resolve: "+row.domain); }
           }
 
           const toPubkey=new window.solanaWeb3.PublicKey(recipientAddress);
@@ -2194,13 +2311,22 @@ function App() {
           let tx=new window.solanaWeb3.Transaction();
 
           if(tok.symbol==="SOL"){
-            const lamports=toLamports(tokenAmount);
-            if(lamports<=0){ setBulkProgress(p=>({...p,[row.id]:{status:"failed",err:"Amount too small"}})); failCount++; continue; }
+            const lamports = lamportsToBigInt(tokenAmount);
+            if(lamports <= BigInt(0)){ setBulkProgress(p=>({...p,[row.id]:{status:"failed",err:"Amount too small"}})); failCount++; continue; }
             tx.add(window.solanaWeb3.SystemProgram.transfer({fromPubkey,toPubkey,lamports}));
           } else {
+            if(!tok.mint){ throw new Error(`${tok.symbol} is missing a mint address — cannot send.`); }
             const TOKEN_PROGRAM_ID=new window.solanaWeb3.PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
             const ASSOCIATED_TOKEN_PROGRAM_ID=new window.solanaWeb3.PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJe1bRS");
             const mintPubkey=new window.solanaWeb3.PublicKey(tok.mint);
+            const knownMintMeta = KNOWN_MINTS[tok.mint];
+            const decimals = (
+              typeof tok.decimals==="number" ? tok.decimals :
+              typeof knownMintMeta?.decimals==="number" ? knownMintMeta.decimals :
+              6
+            );
+            const rawAmount=Math.floor(tokenAmount*Math.pow(10,decimals));
+            if(rawAmount<=0){ setBulkProgress(p=>({...p,[row.id]:{status:"failed",err:"Amount too small for token precision"}})); failCount++; continue; }
             const [fromATA]=await window.solanaWeb3.PublicKey.findProgramAddress(
               [fromPubkey.toBytes(),TOKEN_PROGRAM_ID.toBytes(),mintPubkey.toBytes()],
               ASSOCIATED_TOKEN_PROGRAM_ID
@@ -2210,7 +2336,7 @@ function App() {
               ASSOCIATED_TOKEN_PROGRAM_ID
             );
             const ataInfo=await rpcFetch("getAccountInfo",[toATA.toBase58(),{encoding:"base64"}]);
-            if(!ataInfo||!ataInfo.value){
+            if(!ataInfo?.value){
               tx.add({
                 keys:[
                   {pubkey:fromPubkey,isSigner:true,isWritable:true},
@@ -2225,13 +2351,9 @@ function App() {
                 data:new Uint8Array(0)
               });
             }
-            const decimals=tok.decimals||6;
-            const rawAmount=Math.floor(tokenAmount*Math.pow(10,decimals));
-            const data=new Uint8Array(9);
-            data[0]=3;
-            const view=new DataView(data.buffer);
-            view.setUint32(1,rawAmount&0xFFFFFFFF,true);
-            view.setUint32(5,Math.floor(rawAmount/0x100000000),true);
+            const ixData=new Uint8Array(9);
+            ixData[0]=3;
+            ixData.set(encodeU64LE(rawAmount),1);
             tx.add({
               keys:[
                 {pubkey:fromATA,isSigner:false,isWritable:true},
@@ -2239,12 +2361,12 @@ function App() {
                 {pubkey:fromPubkey,isSigner:true,isWritable:false},
               ],
               programId:TOKEN_PROGRAM_ID,
-              data
+              data:ixData
             });
           }
 
-          const feeLamports=toLamports(feeSol);
-          if(feeLamports>0){
+          const feeLamports=lamportsToBigInt(feeSol);
+          if(feeLamports>BigInt(0)){
             tx.add(window.solanaWeb3.SystemProgram.transfer({fromPubkey,toPubkey:feePubkey,lamports:feeLamports}));
           }
 
