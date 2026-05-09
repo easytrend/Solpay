@@ -1185,39 +1185,265 @@ async function fetchJupiterPricesByMint(mints){
   return out;
 }
 
+// ── Token Registry Service ────────────────────────────────────────────────────
+// Proactively fetches and caches the Jupiter strict token list.
+// • localStorage persistence with 5-minute TTL
+// • Background refresh every TOKEN_REGISTRY_REFRESH_MS
+// • Exposes getTokenMeta(mint) for O(1) lookups
+// • Validates required fields on every entry
+//
+const TOKEN_REGISTRY_REFRESH_MS = 5 * 60 * 1000; // 5 minutes
+const TOKEN_REGISTRY_LS_KEY     = "solpay_token_registry_v2";
+const TOKEN_REGISTRY_LS_TTL     = 5 * 60 * 1000; // 5 minutes
+
+const _tokenRegistry = {
+  data:      null,   // Map<mint, {symbol,name,logo,decimals}>
+  ts:        0,
+  loading:   false,
+  listeners: [],     // callbacks notified when registry updates
+};
+
+// Validate a single token entry from Jupiter
+function _validateTokenEntry(t) {
+  if (!t || typeof t !== "object") return false;
+  if (!t.address || typeof t.address !== "string" || t.address.length < 32) return false;
+  if (!t.symbol  || typeof t.symbol  !== "string") return false;
+  if (!t.name    || typeof t.name    !== "string") return false;
+  if (typeof t.decimals !== "number" || t.decimals < 0 || t.decimals > 18) return false;
+  return true;
+}
+
+// Load registry from localStorage (returns null if missing/expired)
+function _loadRegistryFromStorage() {
+  try {
+    const raw = localStorage.getItem(TOKEN_REGISTRY_LS_KEY);
+    if (!raw) return null;
+    const { ts, entries } = JSON.parse(raw);
+    if (Date.now() - ts > TOKEN_REGISTRY_LS_TTL) return null;
+    const map = new Map(entries);
+    console.log("✅ Token registry loaded from localStorage:", map.size, "tokens");
+    return { map, ts };
+  } catch (_) { return null; }
+}
+
+// Persist registry to localStorage
+function _saveRegistryToStorage(map, ts) {
+  try {
+    localStorage.setItem(TOKEN_REGISTRY_LS_KEY, JSON.stringify({
+      ts,
+      entries: Array.from(map.entries()),
+    }));
+  } catch (_) { /* quota exceeded — ignore */ }
+}
+
+// Fetch the Jupiter strict list and populate _tokenRegistry
+async function _fetchTokenRegistry() {
+  if (_tokenRegistry.loading) return;
+  _tokenRegistry.loading = true;
+  try {
+    const r = await fetch("https://token.jup.ag/strict", {
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const tokens = await r.json();
+
+    const map = new Map();
+    let valid = 0, invalid = 0;
+    tokens.forEach(t => {
+      if (!_validateTokenEntry(t)) { invalid++; return; }
+      map.set(t.address, {
+        symbol:   t.symbol,
+        name:     t.name,
+        logo:     t.logoURI || null,
+        decimals: t.decimals,
+      });
+      valid++;
+    });
+
+    // Always ensure USDC is present with correct metadata
+    const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+    if (!map.has(USDC_MINT)) {
+      map.set(USDC_MINT, {
+        symbol:   "USDC",
+        name:     "USD Coin",
+        logo:     "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png",
+        decimals: 6,
+      });
+      console.warn("⚠ USDC was missing from Jupiter strict list — injected from KNOWN_MINTS");
+    }
+
+    const ts = Date.now();
+    _tokenRegistry.data = map;
+    _tokenRegistry.ts   = ts;
+    _saveRegistryToStorage(map, ts);
+
+    // Also update the in-memory _jupStrictCache used by fetchJupiterTokenMeta
+    _jupStrictCache = {};
+    map.forEach((meta, address) => {
+      _jupStrictCache[address] = meta;
+    });
+
+    console.log(`✅ Token registry refreshed: ${valid} valid, ${invalid} invalid entries`);
+
+    // Notify listeners (e.g. React state updaters)
+    _tokenRegistry.listeners.forEach(fn => { try { fn(map); } catch (_) {} });
+  } catch (e) {
+    console.warn("Token registry fetch failed:", e.message);
+    // Exponential backoff: retry after 30s on failure
+    setTimeout(_fetchTokenRegistry, 30_000);
+  } finally {
+    _tokenRegistry.loading = false;
+  }
+}
+
+// Get metadata for a single mint — O(1) lookup
+function getTokenMeta(mint) {
+  if (!mint) return null;
+  // 1. Live registry
+  if (_tokenRegistry.data) return _tokenRegistry.data.get(mint) || null;
+  // 2. KNOWN_MINTS fallback
+  const km = KNOWN_MINTS[mint];
+  if (km) return { symbol: km.symbol, name: km.name, logo: km.logo, decimals: km.decimals ?? 6 };
+  return null;
+}
+
+// Subscribe to registry updates (returns unsubscribe fn)
+function onTokenRegistryUpdate(fn) {
+  _tokenRegistry.listeners.push(fn);
+  return () => {
+    _tokenRegistry.listeners = _tokenRegistry.listeners.filter(f => f !== fn);
+  };
+}
+
+// Initialise: load from localStorage, then fetch fresh data, then schedule refresh
+(function initTokenRegistry() {
+  const stored = _loadRegistryFromStorage();
+  if (stored) {
+    _tokenRegistry.data = stored.map;
+    _tokenRegistry.ts   = stored.ts;
+    // Populate _jupStrictCache from stored data
+    _jupStrictCache = {};
+    stored.map.forEach((meta, address) => { _jupStrictCache[address] = meta; });
+  }
+  // Always fetch fresh data on startup
+  _fetchTokenRegistry();
+  // Schedule periodic refresh
+  setInterval(_fetchTokenRegistry, TOKEN_REGISTRY_REFRESH_MS);
+})();
+
+// ── Logo Cache (localStorage, 24h TTL) ───────────────────────────────────────
+const LOGO_CACHE_LS_KEY = "solpay_logo_cache_v1";
+const LOGO_CACHE_TTL    = 24 * 60 * 60 * 1000; // 24 hours
+
+const _logoCache = (() => {
+  try {
+    const raw = localStorage.getItem(LOGO_CACHE_LS_KEY);
+    if (!raw) return {};
+    const { ts, entries } = JSON.parse(raw);
+    if (Date.now() - ts > LOGO_CACHE_TTL) return {};
+    return entries || {};
+  } catch (_) { return {}; }
+})();
+
+function _saveLogoCache() {
+  try {
+    localStorage.setItem(LOGO_CACHE_LS_KEY, JSON.stringify({
+      ts: Date.now(),
+      entries: _logoCache,
+    }));
+  } catch (_) {}
+}
+
+// Get logo URL for a mint — checks registry, then KNOWN_MINTS, then img.jup.ag CDN
+function getTokenLogo(mint, symbol) {
+  if (!mint && !symbol) return null;
+  // 1. In-memory logo cache
+  if (mint && _logoCache[mint]) return _logoCache[mint];
+  // 2. Token registry
+  const regMeta = mint ? getTokenMeta(mint) : null;
+  if (regMeta?.logo) {
+    if (mint) { _logoCache[mint] = regMeta.logo; _saveLogoCache(); }
+    return regMeta.logo;
+  }
+  // 3. KNOWN_MINTS
+  const km = mint ? KNOWN_MINTS[mint] : null;
+  if (km?.logo) {
+    if (mint) { _logoCache[mint] = km.logo; _saveLogoCache(); }
+    return km.logo;
+  }
+  // 4. Jupiter CDN fallback (always works for known tokens)
+  if (mint) return `https://img.jup.ag/tokens/${mint}`;
+  return null;
+}
+
+// ── Token Metadata Validation ─────────────────────────────────────────────────
+// Cross-references token metadata against the registry and flags mismatches.
+function validateTokenMetadata(token) {
+  const issues = [];
+  if (!token) return { valid: false, issues: ["Token is null"] };
+
+  // Mint address format check
+  if (token.mint) {
+    if (token.mint.length < 32 || token.mint.length > 44) {
+      issues.push(`Invalid mint address length: ${token.mint.length}`);
+    }
+    try { new window.solanaWeb3.PublicKey(token.mint); }
+    catch (_) { issues.push("Mint address is not valid base58"); }
+  }
+
+  // Decimals sanity check
+  if (typeof token.decimals === "number") {
+    if (token.decimals < 0 || token.decimals > 18) {
+      issues.push(`Suspicious decimals value: ${token.decimals}`);
+    }
+  }
+
+  // Cross-reference with registry
+  if (token.mint) {
+    const regMeta = getTokenMeta(token.mint);
+    if (regMeta) {
+      if (regMeta.symbol && token.symbol && regMeta.symbol !== token.symbol) {
+        issues.push(`Symbol mismatch: wallet=${token.symbol}, registry=${regMeta.symbol}`);
+      }
+      if (typeof regMeta.decimals === "number" && typeof token.decimals === "number"
+          && regMeta.decimals !== token.decimals) {
+        issues.push(`Decimals mismatch: wallet=${token.decimals}, registry=${regMeta.decimals}`);
+      }
+    }
+  }
+
+  if (issues.length > 0) {
+    console.warn(`⚠ Token metadata issues for ${token.symbol||token.mint}:`, issues);
+  }
+
+  return { valid: issues.length === 0, issues };
+}
+
 // ── Token metadata: Jupiter strict list + all-tokens fallback + Metaplex on-chain ──
-let _jupStrictCache  = null; // verified tokens only
-let _jupAllCache     = null; // all tokens (includes LP, meme, unknown)
+// _jupStrictCache is now populated by the Token Registry Service above.
+// This function is kept for backward compatibility with fetchBalances.
+let _jupAllCache = null; // all tokens (includes LP, meme, unknown)
 
 async function fetchJupiterTokenMeta(mints){
   const mintsArr = (mints||[]).filter(Boolean);
   if(mintsArr.length===0) return {};
 
-  // 1. Try strict list first (fast, cached)
-  if(!_jupStrictCache){
-    try{
-      const r=await fetch("https://token.jup.ag/strict",
-        { signal: AbortSignal.timeout(10000) });
-      if(!r.ok) throw new Error("HTTP "+r.status);
-      const tokens=await r.json();
-      _jupStrictCache={};
-      tokens.forEach(t=>{
-        _jupStrictCache[t.address]={
-          symbol:t.symbol, name:t.name, logo:t.logoURI, decimals:t.decimals
-        };
-      });
-      console.log("✅ Jupiter strict list loaded:", Object.keys(_jupStrictCache).length, "tokens");
-    }catch(e){
-      console.warn("Jupiter strict list failed:", e.message);
-      _jupStrictCache={};
+  // 1. Try registry (already loaded by Token Registry Service)
+  const out = {};
+  const missing = [];
+  mintsArr.forEach(m => {
+    const meta = getTokenMeta(m);
+    if (meta) {
+      out[m] = meta;
+    } else {
+      missing.push(m);
     }
-  }
+  });
 
-  // Check which mints are still missing after strict list
-  const missing = mintsArr.filter(m=>!_jupStrictCache[m]);
+  if (missing.length === 0) return out;
 
   // 2. For missing mints, try the all-tokens list (larger, slower)
-  if(missing.length>0 && !_jupAllCache){
+  if(!_jupAllCache){
     try{
       const r=await fetch("https://token.jup.ag/all",
         { signal: AbortSignal.timeout(15000) });
@@ -1236,13 +1462,17 @@ async function fetchJupiterTokenMeta(mints){
     }
   }
 
+  missing.forEach(m => {
+    if (_jupAllCache[m]) out[m] = _jupAllCache[m];
+  });
+
+  const stillMissing = missing.filter(m => !out[m]);
+
   // 3. For still-missing mints, try Metaplex on-chain metadata
-  const stillMissing = missing.filter(m=>!(_jupAllCache&&_jupAllCache[m]));
   const metaplexMeta = {};
   if(stillMissing.length>0){
     await Promise.allSettled(stillMissing.map(async mint=>{
       try{
-        // Derive Metaplex metadata PDA: seeds = ["metadata", METAPLEX_PROGRAM, mint]
         const METAPLEX_PROGRAM = new window.solanaWeb3.PublicKey(
           "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
         );
@@ -1259,16 +1489,11 @@ async function fetchJupiterTokenMeta(mints){
           [metadataPDA.toBase58(), {encoding:"base64"}]);
         if(!info?.value?.data?.[0]) return;
 
-        // Decode Metaplex metadata (simplified — extract name, symbol, uri)
         const b64 = info.value.data[0];
         const bin = atob(b64);
         const bytes = new Uint8Array(bin.length);
         for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
 
-        // Metaplex metadata layout (after 1-byte key + 32-byte update_auth + 32-byte mint):
-        // offset 65: name (4-byte LE length prefix + UTF-8 bytes, padded to 32)
-        // offset 101: symbol (4-byte LE length prefix + UTF-8 bytes, padded to 10)
-        // offset 115: uri (4-byte LE length prefix + UTF-8 bytes, padded to 200)
         const readStr = (offset) => {
           const len = bytes[offset] | (bytes[offset+1]<<8) | (bytes[offset+2]<<16) | (bytes[offset+3]<<24);
           if(len<=0||len>500) return "";
@@ -1289,11 +1514,10 @@ async function fetchJupiterTokenMeta(mints){
           metaplexMeta[mint] = {
             symbol: symbol||("TKN-"+mint.slice(0,4)),
             name:   name||("Token "+mint.slice(0,8)),
-            logo:   null, // will try to fetch from uri below
+            logo:   null,
             decimals: 0,
             uri
           };
-          // Optionally fetch off-chain JSON for logo
           if(uri && uri.startsWith("http")){
             try{
               const jr = await fetch(uri, { signal: AbortSignal.timeout(4000) });
@@ -1304,20 +1528,15 @@ async function fetchJupiterTokenMeta(mints){
             }catch(_){}
           }
         }
-      }catch(_){
-        // Silently skip — not all mints have Metaplex metadata
-      }
+      }catch(_){}
     }));
   }
 
-  // Merge all sources: strict > all > metaplex
-  const out={};
-  mintsArr.forEach(m=>{
-    out[m] = _jupStrictCache[m]
-      || (_jupAllCache&&_jupAllCache[m])
-      || metaplexMeta[m]
-      || null;
+  stillMissing.forEach(m => {
+    if (metaplexMeta[m]) out[m] = metaplexMeta[m];
+    else out[m] = null;
   });
+
   return out;
 }
 
@@ -1466,19 +1685,28 @@ async function resolveSNSDomain(domain) {
 
 // ── Token Logo with fallback ──
 function TokenLogo({token, size=36}) {
-  const [imgFailed, setImgFailed] = React.useState(false);
   const t = token || {};
-  const sz = size;
-  const logoSrc = t.logo || (t.mint ? `https://img.jup.ag/tokens/${t.mint}` : null);
+  // Resolve logo: registry service > token.logo > CDN fallback
+  const resolvedLogo = getTokenLogo(t.mint, t.symbol) || t.logo || null;
+  const [src, setSrc] = React.useState(resolvedLogo);
+  const [failed, setFailed] = React.useState(false);
 
-  if(!imgFailed && logoSrc) {
+  // Update src if token changes (e.g. after enriched pass)
+  React.useEffect(() => {
+    const newLogo = getTokenLogo(t.mint, t.symbol) || t.logo || null;
+    if (newLogo !== src) { setSrc(newLogo); setFailed(false); }
+  }, [t.mint, t.logo]);
+
+  const sz = size;
+
+  if (!failed && src) {
     return (
       <div style={{position:"relative",width:sz,height:sz,flexShrink:0}}>
         <img
-          src={logoSrc}
+          src={src}
           alt={t.symbol||"token"}
           style={{width:sz,height:sz,borderRadius:"50%",objectFit:"cover",display:"block"}}
-          onError={()=>setImgFailed(true)}
+          onError={()=>setFailed(true)}
         />
       </div>
     );
@@ -1732,7 +1960,9 @@ function App() {
   const [tokenQ,setTokenQ]=React.useState("");
   const [sendingFee,setSendingFee]=React.useState(false);
   const [toast,setToast]=React.useState(null);
-  const [bulkProgress,setBulkProgress]=React.useState(null); // {rowId: {status,txId,err}}
+  const [bulkProgress,setBulkProgress]=React.useState(null);
+  // Increments whenever the token registry refreshes — triggers re-render of token lists
+  const [registryVersion,setRegistryVersion]=React.useState(0);
 
   const [liveRates,setLiveRates]=React.useState({fiat:{},crypto:{},updatedAt:null});
   const [ratesLoading,setRatesLoading]=React.useState(true);
@@ -1748,6 +1978,13 @@ function App() {
     load();
     const id=setInterval(load,30000); // refresh every 30s to match cache TTL
     return()=>clearInterval(id);
+  },[]);
+
+  // Subscribe to token registry updates — bump version to trigger re-renders
+  // when the background 5-minute refresh completes
+  React.useEffect(()=>{
+    const unsub = onTokenRegistryUpdate(()=>setRegistryVersion(v=>v+1));
+    return unsub;
   },[]);
 
   // Auto-select first held token as soon as any tokens become available.
@@ -1802,7 +2039,7 @@ function App() {
       return{...meta,...t,price:livePrice};  // t wins — preserves balance/decimals/mint
     });
     return[solEntry,...splEntries];
-  },[connected,solBalance,splTokens,liveRates]);
+  },[connected,solBalance,splTokens,liveRates,registryVersion]);
 
   // Token list: only show held FUNGIBLE tokens when connected, alphabetically sorted.
   // NFTs (decimals=0, rawAmount=1) are explicitly excluded.
@@ -1837,7 +2074,7 @@ function App() {
 
     return [...filtered].sort((a,b)=>(a.symbol||"").localeCompare(b.symbol||""));
   // splTokens is listed explicitly so the memo re-runs on the fast-pass update
-  },[connected, walletTokenList, solBalance, splTokens, tokenQ]);
+  },[connected, walletTokenList, solBalance, splTokens, tokenQ, registryVersion]);
 
   // Find selected token — only from wallet list when connected
   const tok = connected && walletTokenList
@@ -2173,6 +2410,39 @@ function App() {
       const tokenAmount = tokAmt;
       if(!(tokenAmount > 0)) throw new Error("Amount must be greater than zero.");
 
+      // ── Pre-flight balance check ──────────────────────────────────────────
+      if(tokLive.symbol === "SOL"){
+        if(solBalance !== null && tokenAmount > solBalance){
+          throw new Error(
+            `Insufficient SOL balance. You have ${solBalance.toFixed(6)} SOL ` +
+            `but are trying to send ${fmtTok(tokenAmount)} SOL.`
+          );
+        }
+        // Ensure enough SOL remains for fees (~0.001 SOL buffer)
+        const FEE_BUFFER = 0.001;
+        if(solBalance !== null && tokenAmount + FEE_BUFFER > solBalance){
+          throw new Error(
+            `Amount too close to your full SOL balance. ` +
+            `Reserve at least ${FEE_BUFFER} SOL for transaction fees.`
+          );
+        }
+      } else {
+        if(tokLive.balance != null && tokenAmount > tokLive.balance){
+          throw new Error(
+            `Insufficient ${tokLive.symbol} balance. ` +
+            `You have ${fmtSig6(tokLive.balance)} ${tokLive.symbol} ` +
+            `but are trying to send ${fmtTok(tokenAmount)}.`
+          );
+        }
+      }
+
+      // Validate metadata before building transaction
+      const metaCheck = validateTokenMetadata(tokLive);
+      if(!metaCheck.valid){
+        console.warn("Token metadata issues:", metaCheck.issues);
+        // Non-fatal — log and continue with best-effort data
+      }
+
       const feeSol     = computeFeeSolFromTokenAmount(tokenAmount, tokLive.price, liveSolPrice);
       let   tx         = new window.solanaWeb3.Transaction();
 
@@ -2307,7 +2577,32 @@ function App() {
       pollConfirm(txId).then(()=>fetchBalances(walletPubkey)).catch(()=>fetchBalances(walletPubkey));
 
     }catch(e){
-      setToast({msg:"❌ "+(e.message||"Transfer failed"), type:"error"});
+      // Map common failure modes to user-friendly messages
+      const raw = e?.message || String(e);
+      let userMsg = raw;
+
+      if(raw.includes("User rejected") || raw.includes("rejected") ||
+         raw.includes("cancelled") || raw.includes("canceled") || e?.code === 4001){
+        userMsg = "Transaction cancelled by user.";
+      } else if(raw.includes("Insufficient") || raw.includes("insufficient")){
+        userMsg = raw; // already user-friendly from pre-flight check
+      } else if(raw.includes("blockhash") || raw.includes("block hash")){
+        userMsg = "Network congestion — blockhash expired. Please try again.";
+      } else if(raw.includes("0x1") || raw.includes("custom program error: 0x1")){
+        userMsg = "Insufficient token balance for this transfer.";
+      } else if(raw.includes("0x11") || raw.includes("custom program error: 0x11")){
+        userMsg = "Arithmetic overflow — amount may be too large for this token.";
+      } else if(raw.includes("AccountNotFound") || raw.includes("account not found")){
+        userMsg = "Token account not found. The recipient may not hold this token yet.";
+      } else if(raw.includes("timeout") || raw.includes("AbortError")){
+        userMsg = "Network timeout — check your connection and try again.";
+      } else if(raw.includes("All RPC nodes failed")){
+        userMsg = "Cannot reach Solana network. Check your internet connection.";
+      } else if(raw.includes("mint address is missing")){
+        userMsg = raw; // already user-friendly
+      }
+
+      setToast({msg:"❌ "+userMsg, type:"error"});
       console.error("Transfer failed:", e);
     }finally{
       setSendingFee(false);

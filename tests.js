@@ -297,13 +297,11 @@ test("NGN remains in CURRENCIES array", () => {
 });
 
 // ── (f) Token display, NFT filtering, and send fixes ─────────────────────────
-// These run synchronously regardless of RUN_LIVE
 console.log("\n(f) Token display, NFT filtering, and send fixes");
 
 test("walletTokenList spreads t after meta so live balance is never overwritten", () => {
   const fn = src.match(/const walletTokenList = React\.useMemo[\s\S]*?\}\s*,\s*\[connected/m);
   assert(fn, "walletTokenList memo not found");
-  // The spread must be {...meta,...t,...} — t last so its fields win
   assert(fn[0].includes("{...meta,...t,price:livePrice}"),
     "walletTokenList must spread t after meta so live balance/decimals/mint survive");
 });
@@ -346,7 +344,7 @@ test("handleSingleSendFee normalises fromPubkey via toString()", () => {
   const fn = src.match(/async function handleSingleSendFee[\s\S]*?^  }/m);
   assert(fn, "handleSingleSendFee not found");
   assert(fn[0].includes("new window.solanaWeb3.PublicKey(provider.publicKey.toString())"),
-    "fromPubkey must be normalised via toString() to avoid cross-scope instanceof failures");
+    "fromPubkey must be normalised via toString()");
 });
 
 test("handleBulkSendFee normalises fromPubkey via toString()", () => {
@@ -359,24 +357,20 @@ test("handleBulkSendFee normalises fromPubkey via toString()", () => {
 test("chargePlatformFeeInSol normalises fromPubkey via toString()", () => {
   const fn = src.match(/async function chargePlatformFeeInSol[\s\S]*?^  }/m);
   assert(fn, "chargePlatformFeeInSol not found");
-  assert(fn[0].includes("toString()"),
-    "chargePlatformFeeInSol fromPubkey must be normalised via toString()");
+  assert(fn[0].includes("toString()"), "chargePlatformFeeInSol fromPubkey must use toString()");
 });
 
 test("deprecated confirmTransaction is not called in send flow", () => {
   const fn = src.match(/async function handleSingleSendFee[\s\S]*?^  }/m);
   assert(fn, "handleSingleSendFee not found");
-  // Strip comments, then check no live call to confirmTransaction
   const codeOnly = fn[0].replace(/\/\/[^\n]*/g, "");
   assert(!codeOnly.includes("confirmTransaction"),
     "handleSingleSendFee must not call deprecated confirmTransaction");
 });
 
 test("pollConfirm uses getSignatureStatuses for confirmation polling", () => {
-  assert(src.includes("getSignatureStatuses"),
-    "Confirmation polling must use getSignatureStatuses (not deprecated confirmTransaction)");
-  assert(src.includes("const pollConfirm = async"),
-    "pollConfirm helper must be defined");
+  assert(src.includes("getSignatureStatuses"), "Must use getSignatureStatuses");
+  assert(src.includes("const pollConfirm = async"), "pollConfirm helper must be defined");
 });
 
 test("pollConfirm checks for confirmed or finalized status", () => {
@@ -384,57 +378,234 @@ test("pollConfirm checks for confirmed or finalized status", () => {
     "pollConfirm must check for both confirmed and finalized status");
 });
 
-// ── NFT filtering unit test (pure logic, no DOM) ─────────────────────────────
-test("NFT filter logic: decimals=0 rawAmount=1 is excluded", () => {
-  // Simulate the filter predicate inline
-  function isHeldFungible(t, solBalance) {
-    if(t.symbol === "SOL") return solBalance !== null && solBalance >= 0;
+test("NFT filter logic: pure unit test", () => {
+  function isHeldFungible(t, solBal) {
+    if(t.symbol === "SOL") return solBal !== null && solBal >= 0;
     if(t.isNFT === true) return false;
     if(t.decimals === 0 && t.rawAmount === 1) return false;
     return typeof t.balance === "number" && t.balance > 0;
   }
-  // NFT: decimals=0, rawAmount=1
-  assert(!isHeldFungible({symbol:"NFT",decimals:0,rawAmount:1,balance:1}, 1),
-    "NFT (decimals=0, rawAmount=1) must be excluded");
-  // NFT via isNFT flag
-  assert(!isHeldFungible({symbol:"NFT2",isNFT:true,decimals:0,rawAmount:1,balance:1}, 1),
-    "Token with isNFT=true must be excluded");
-  // Fungible with 0 balance
-  assert(!isHeldFungible({symbol:"USDC",decimals:6,rawAmount:1000000,balance:0}, 1),
-    "Zero-balance fungible must be excluded");
-  // Valid fungible
-  assert(isHeldFungible({symbol:"USDC",decimals:6,rawAmount:1000000,balance:1.0}, 1),
-    "Fungible with balance>0 must be included");
-  // SOL
-  assert(isHeldFungible({symbol:"SOL"}, 0.5),
-    "SOL with loaded balance must be included");
-  assert(!isHeldFungible({symbol:"SOL"}, null),
-    "SOL with null balance (loading) must be excluded");
+  assert(!isHeldFungible({symbol:"NFT",decimals:0,rawAmount:1,balance:1}, 1), "NFT excluded");
+  assert(!isHeldFungible({symbol:"NFT2",isNFT:true,decimals:0,rawAmount:1,balance:1}, 1), "isNFT excluded");
+  assert(!isHeldFungible({symbol:"USDC",decimals:6,rawAmount:1000000,balance:0}, 1), "zero balance excluded");
+  assert(isHeldFungible({symbol:"USDC",decimals:6,rawAmount:1000000,balance:1.0}, 1), "fungible included");
+  assert(isHeldFungible({symbol:"SOL"}, 0.5), "SOL included");
+  assert(!isHeldFungible({symbol:"SOL"}, null), "SOL null balance excluded");
 });
 
 test("enriched pass sanity check: prevents uiAmount=0 from bad decimals", () => {
-  // Simulate the guard logic
-  function safeRecompute(rawAmount, oldDecimals, newDecimals) {
-    if(newDecimals === oldDecimals) return rawAmount / Math.pow(10, oldDecimals);
-    const recomputed = rawAmount / Math.pow(10, newDecimals);
-    if(recomputed > 0 && recomputed < 1e15) return recomputed;
-    return rawAmount / Math.pow(10, oldDecimals); // fall back to original
+  function safeRecompute(rawAmount, oldDec, newDec) {
+    if(newDec === oldDec) return rawAmount / Math.pow(10, oldDec);
+    const r = rawAmount / Math.pow(10, newDec);
+    if(r > 0 && r < 1e15) return r;
+    return rawAmount / Math.pow(10, oldDec);
   }
-  // Jupiter returns decimals=0 for a token that actually has 6 decimals
-  // rawAmount=1000000 (1 USDC), oldDecimals=6, newDecimals=0 (wrong)
-  // Without guard: 1000000 / 10^0 = 1000000 (absurd, but > 0 so passes)
-  // With guard: 1000000 < 1e15 so it would pass — but the trustedDecimals
-  // guard prevents this by only using metadata decimals from KNOWN_MINTS/strict list
-  const result = safeRecompute(1000000, 6, 6); // same decimals — no recompute
-  assertEqual(result, 1.0, "1 USDC should be 1.0 with correct decimals");
-
-  // Simulate bad metadata returning decimals=0 for a 6-decimal token
-  // The trustedDecimals guard would keep oldDecimals=6 in this case
-  const badResult = safeRecompute(1000000, 6, 0);
-  // 1000000 / 10^0 = 1000000 — this is > 1e15? No, 1M < 1e15, so it passes
-  // The real protection is trustedDecimals only coming from KNOWN_MINTS/strict
-  assert(badResult > 0, "Recomputed value must remain positive");
+  assertEqual(safeRecompute(1000000, 6, 6), 1.0, "1 USDC = 1.0");
+  assert(safeRecompute(1000000, 6, 0) > 0, "Recomputed must be positive");
+  assertEqual(safeRecompute(1e16, 6, 0), 1e16 / Math.pow(10, 6), "Absurd value falls back");
 });
+
+// ── (g) Token Registry Service ────────────────────────────────────────────────
+console.log("\n(g) Token Registry Service");
+
+test("Token Registry Service is defined", () => {
+  assert(src.includes("const _tokenRegistry ="), "_tokenRegistry must be defined");
+  assert(src.includes("function _fetchTokenRegistry"), "_fetchTokenRegistry must be defined");
+  assert(src.includes("function getTokenMeta"), "getTokenMeta must be defined");
+  assert(src.includes("function onTokenRegistryUpdate"), "onTokenRegistryUpdate must be defined");
+});
+
+test("Token Registry initialises from localStorage on startup", () => {
+  assert(src.includes("_loadRegistryFromStorage"), "_loadRegistryFromStorage must be called");
+  assert(src.includes("TOKEN_REGISTRY_LS_KEY"), "localStorage key must be defined");
+});
+
+test("Token Registry persists to localStorage after fetch", () => {
+  assert(src.includes("_saveRegistryToStorage"), "_saveRegistryToStorage must be called");
+});
+
+test("Token Registry has 5-minute refresh interval", () => {
+  assert(src.includes("TOKEN_REGISTRY_REFRESH_MS = 5 * 60 * 1000"),
+    "Registry refresh interval must be 5 minutes");
+});
+
+test("Token Registry schedules periodic refresh with setInterval", () => {
+  assert(src.includes("setInterval(_fetchTokenRegistry, TOKEN_REGISTRY_REFRESH_MS)"),
+    "Registry must schedule periodic refresh");
+});
+
+test("Token Registry validates entries before storing", () => {
+  assert(src.includes("function _validateTokenEntry"), "_validateTokenEntry must be defined");
+  assert(src.includes("_validateTokenEntry(t)"), "_validateTokenEntry must be called");
+});
+
+test("Token Registry ensures USDC is always present", () => {
+  assert(src.includes("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"),
+    "USDC mint address must be present");
+  assert(src.includes("USDC was missing from Jupiter strict list"),
+    "Registry must inject USDC if missing from Jupiter response");
+});
+
+test("Token Registry notifies listeners on update", () => {
+  assert(src.includes("_tokenRegistry.listeners.forEach"),
+    "Registry must notify listeners after update");
+});
+
+test("App subscribes to registry updates via useEffect", () => {
+  assert(src.includes("onTokenRegistryUpdate(()=>setRegistryVersion"),
+    "App must subscribe to registry updates");
+});
+
+test("registryVersion is in walletTokenList and filteredTokens deps", () => {
+  assert(src.includes("registryVersion"), "registryVersion must be used in deps");
+});
+
+// ── (h) Logo Cache ────────────────────────────────────────────────────────────
+console.log("\n(h) Logo Cache");
+
+test("Logo cache is defined with localStorage persistence", () => {
+  assert(src.includes("LOGO_CACHE_LS_KEY"), "LOGO_CACHE_LS_KEY must be defined");
+  assert(src.includes("LOGO_CACHE_TTL"), "LOGO_CACHE_TTL must be defined");
+  assert(src.includes("function getTokenLogo"), "getTokenLogo must be defined");
+  assert(src.includes("_saveLogoCache"), "_saveLogoCache must be defined");
+});
+
+test("Logo cache has 24-hour TTL", () => {
+  assert(src.includes("24 * 60 * 60 * 1000"), "Logo cache TTL must be 24 hours");
+});
+
+test("getTokenLogo checks registry, KNOWN_MINTS, then CDN fallback", () => {
+  const fn = src.match(/function getTokenLogo[\s\S]*?^}/m);
+  assert(fn, "getTokenLogo not found");
+  assert(fn[0].includes("getTokenMeta"), "Must check registry first");
+  assert(fn[0].includes("KNOWN_MINTS"), "Must check KNOWN_MINTS as fallback");
+  assert(fn[0].includes("img.jup.ag/tokens"), "Must use Jupiter CDN as final fallback");
+});
+
+test("TokenLogo component uses getTokenLogo service", () => {
+  const fn = src.match(/function TokenLogo[\s\S]*?^}/m);
+  assert(fn, "TokenLogo not found");
+  assert(fn[0].includes("getTokenLogo"), "TokenLogo must use getTokenLogo service");
+});
+
+// ── (i) Metadata Validation ───────────────────────────────────────────────────
+console.log("\n(i) Metadata Validation");
+
+test("validateTokenMetadata function is defined", () => {
+  assert(src.includes("function validateTokenMetadata"), "validateTokenMetadata must be defined");
+});
+
+test("validateTokenMetadata checks mint address format", () => {
+  const fn = src.match(/function validateTokenMetadata[\s\S]*?^}/m);
+  assert(fn, "validateTokenMetadata not found");
+  assert(fn[0].includes("mint.length"), "Must validate mint address length");
+});
+
+test("validateTokenMetadata checks decimals range", () => {
+  const fn = src.match(/function validateTokenMetadata[\s\S]*?^}/m);
+  assert(fn, "validateTokenMetadata not found");
+  assert(fn[0].includes("decimals < 0") || fn[0].includes("decimals > 18"),
+    "Must validate decimals range");
+});
+
+test("validateTokenMetadata cross-references registry", () => {
+  const fn = src.match(/function validateTokenMetadata[\s\S]*?^}/m);
+  assert(fn, "validateTokenMetadata not found");
+  assert(fn[0].includes("getTokenMeta"), "Must cross-reference registry");
+});
+
+test("handleSingleSendFee calls validateTokenMetadata before building tx", () => {
+  const fn = src.match(/async function handleSingleSendFee[\s\S]*?^  }/m);
+  assert(fn, "handleSingleSendFee not found");
+  assert(fn[0].includes("validateTokenMetadata"), "Must validate token metadata before tx");
+});
+
+// ── (j) Error Handling ────────────────────────────────────────────────────────
+console.log("\n(j) Error Handling");
+
+test("handleSingleSendFee has pre-flight SOL balance check", () => {
+  const fn = src.match(/async function handleSingleSendFee[\s\S]*?^  }/m);
+  assert(fn, "handleSingleSendFee not found");
+  assert(fn[0].includes("Insufficient SOL balance"), "Must check SOL balance before tx");
+});
+
+test("handleSingleSendFee has pre-flight SPL balance check", () => {
+  const fn = src.match(/async function handleSingleSendFee[\s\S]*?^  }/m);
+  assert(fn, "handleSingleSendFee not found");
+  assert(fn[0].includes("Insufficient") && fn[0].includes("balance"),
+    "Must check SPL token balance before tx");
+});
+
+test("handleSingleSendFee has SOL fee buffer check", () => {
+  const fn = src.match(/async function handleSingleSendFee[\s\S]*?^  }/m);
+  assert(fn, "handleSingleSendFee not found");
+  assert(fn[0].includes("FEE_BUFFER") || fn[0].includes("Reserve at least"),
+    "Must reserve SOL for transaction fees");
+});
+
+test("handleSingleSendFee maps blockhash expiry to user-friendly message", () => {
+  const fn = src.match(/async function handleSingleSendFee[\s\S]*?^  }/m);
+  assert(fn, "handleSingleSendFee not found");
+  assert(fn[0].includes("blockhash expired") || fn[0].includes("Network congestion"),
+    "Must map blockhash errors to user-friendly message");
+});
+
+test("handleSingleSendFee maps custom program error 0x1 to insufficient balance", () => {
+  const fn = src.match(/async function handleSingleSendFee[\s\S]*?^  }/m);
+  assert(fn, "handleSingleSendFee not found");
+  assert(fn[0].includes("0x1"), "Must handle custom program error 0x1");
+});
+
+test("handleSingleSendFee maps network timeout to user-friendly message", () => {
+  const fn = src.match(/async function handleSingleSendFee[\s\S]*?^  }/m);
+  assert(fn, "handleSingleSendFee not found");
+  assert(fn[0].includes("timeout") || fn[0].includes("AbortError"),
+    "Must handle network timeout errors");
+});
+
+test("handleSingleSendFee maps RPC failure to user-friendly message", () => {
+  const fn = src.match(/async function handleSingleSendFee[\s\S]*?^  }/m);
+  assert(fn, "handleSingleSendFee not found");
+  assert(fn[0].includes("All RPC nodes failed"), "Must handle total RPC failure");
+});
+
+// ── (k) Metadata validation unit tests ───────────────────────────────────────
+console.log("\n(k) Metadata validation unit tests");
+
+test("_validateTokenEntry rejects invalid entries", () => {
+  function _validateTokenEntry(t) {
+    if (!t || typeof t !== "object") return false;
+    if (!t.address || typeof t.address !== "string" || t.address.length < 32) return false;
+    if (!t.symbol  || typeof t.symbol  !== "string") return false;
+    if (!t.name    || typeof t.name    !== "string") return false;
+    if (typeof t.decimals !== "number" || t.decimals < 0 || t.decimals > 18) return false;
+    return true;
+  }
+  assert(!_validateTokenEntry(null), "null rejected");
+  assert(!_validateTokenEntry({}), "empty object rejected");
+  assert(!_validateTokenEntry({address:"short",symbol:"X",name:"X",decimals:6}), "short address rejected");
+  assert(!_validateTokenEntry({
+    address:"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    symbol:"USDC", name:"USD Coin", decimals:19
+  }), "decimals > 18 rejected");
+  assert(_validateTokenEntry({
+    address:"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    symbol:"USDC", name:"USD Coin", decimals:6
+  }), "valid USDC entry passes");
+});
+
+test("USDC is in KNOWN_MINTS with correct mint address", () => {
+  const km = src.match(/const KNOWN_MINTS\s*=\s*\{([\s\S]*?)\};/);
+  assert(km, "KNOWN_MINTS not found");
+  assert(km[1].includes("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"),
+    "USDC mint must be in KNOWN_MINTS");
+});
+
+test("Token Registry injects USDC with decimals=6", () => {
+  assert(src.includes("decimals: 6") || src.includes("decimals:6"),
+    "USDC decimals=6 must be set in registry injection");
+});
+
 
 // ── Live tests ────────────────────────────────────────────────────────────────
 const RUN_LIVE = process.env.RUN_LIVE === "1";
