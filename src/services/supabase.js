@@ -157,3 +157,87 @@ export async function syncP2PTransactionStatuses(orders = []) {
     console.warn('[Supabase] syncP2PTransactionStatuses error:', err.message);
   }
 }
+
+// ── Cross-device PajCash session helpers ─────────────────────────────────────
+
+/**
+ * Save (upsert) a PajCash session to Supabase after successful OTP verification.
+ * Called once per verification so any other device the user connects to can
+ * restore the session automatically without re-verifying.
+ *
+ * @param {string} walletAddress - User's Solana public key (base58)
+ * @param {string} email         - Verified email address
+ * @param {string} token         - PajCash JWT session token
+ * @param {number} expiryMs      - Expiry timestamp in milliseconds (Date.now() based)
+ */
+export async function saveSession(walletAddress, email, token, expiryMs) {
+  if (!supabase || !walletAddress || !token) return;
+  try {
+    const { error } = await supabase
+      .from('paj_sessions')
+      .upsert(
+        {
+          wallet_address: walletAddress,
+          email,
+          session_token: token,
+          expires_at: new Date(expiryMs).toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'wallet_address' }
+      );
+    if (error) console.warn('[Supabase] saveSession failed:', error.message);
+  } catch (err) {
+    console.warn('[Supabase] saveSession error:', err.message);
+  }
+}
+
+/**
+ * Load a PajCash session from Supabase for a given wallet address.
+ * Returns the row object or null if not found / expired.
+ *
+ * @param {string} walletAddress - User's Solana public key (base58)
+ * @returns {{ email: string, session_token: string, expires_at: string } | null}
+ */
+export async function loadSession(walletAddress) {
+  if (!supabase || !walletAddress) return null;
+  try {
+    const { data, error } = await supabase
+      .from('paj_sessions')
+      .select('email, session_token, expires_at')
+      .eq('wallet_address', walletAddress)
+      .single();
+
+    if (error || !data) return null;
+
+    // Check if token has expired
+    if (new Date(data.expires_at).getTime() < Date.now()) {
+      // Clean up expired row silently
+      await supabase.from('paj_sessions').delete().eq('wallet_address', walletAddress);
+      return null;
+    }
+
+    return data;
+  } catch (err) {
+    console.warn('[Supabase] loadSession error:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Delete a PajCash session from Supabase on logout.
+ *
+ * @param {string} walletAddress - User's Solana public key (base58)
+ */
+export async function deleteSession(walletAddress) {
+  if (!supabase || !walletAddress) return;
+  try {
+    const { error } = await supabase
+      .from('paj_sessions')
+      .delete()
+      .eq('wallet_address', walletAddress);
+    if (error) console.warn('[Supabase] deleteSession failed:', error.message);
+  } catch (err) {
+    console.warn('[Supabase] deleteSession error:', err.message);
+  }
+}
+

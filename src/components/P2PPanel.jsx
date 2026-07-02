@@ -19,7 +19,7 @@ import {
   getTransaction,
 } from '../services/pajcashService';
 import { getQuote, buildSwapTransaction } from '../services/swapService';
-import { logP2PTransaction, syncP2PTransactionStatuses, updateP2PTransactionStatus } from '../services/supabase';
+import { logP2PTransaction, syncP2PTransactionStatuses, updateP2PTransactionStatus, saveSession, loadSession, deleteSession } from '../services/supabase';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { PublicKey, Transaction, TransactionInstruction, SystemProgram, Keypair, VersionedTransaction } from '@solana/web3.js';
 import {
@@ -487,7 +487,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
     }
   }, [isLiveRoute, PAJCASH_API_KEY]);
 
-  // ── Restore bank and session details from localStorage on wallet connect ──
+  // ── Restore session from localStorage (same device) or Supabase (any device) ───
   useEffect(() => {
     // Always clear history when wallet changes so a newly connected wallet
     // never sees transactions from the previously connected wallet.
@@ -495,24 +495,45 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
     if (publicKey) {
       const key = publicKey.toBase58();
-      
-      // Restore session
-      const cachedToken = localStorage.getItem(`paj_sessionToken_${key}`);
-      const cachedEmail = localStorage.getItem(`paj_sessionEmail_${key}`);
+
+      // 1️⃣ Try localStorage first (instant, no network)
+      const cachedToken  = localStorage.getItem(`paj_sessionToken_${key}`);
+      const cachedEmail  = localStorage.getItem(`paj_sessionEmail_${key}`);
       const cachedExpiry = localStorage.getItem(`paj_sessionExpiry_${key}`);
+
       if (cachedToken && cachedExpiry && Date.now() < Number(cachedExpiry)) {
         setSessionToken(cachedToken);
         setSessionEmail(cachedEmail || '');
         setAuthStep('logged_in');
-      } else {
-        // Clear expired session
-        localStorage.removeItem(`paj_sessionToken_${key}`);
-        localStorage.removeItem(`paj_sessionEmail_${key}`);
-        localStorage.removeItem(`paj_sessionExpiry_${key}`);
-        setSessionToken('');
-        setSessionEmail('');
-        setAuthStep('input_email');
+        return;
       }
+
+      // localStorage miss — clear any stale data
+      localStorage.removeItem(`paj_sessionToken_${key}`);
+      localStorage.removeItem(`paj_sessionEmail_${key}`);
+      localStorage.removeItem(`paj_sessionExpiry_${key}`);
+
+      // 2️⃣ Fall back to Supabase (cross-device restore)
+      loadSession(key).then(row => {
+        if (row) {
+          // Valid session found in Supabase — restore silently
+          const expiryMs = new Date(row.expires_at).getTime();
+          setSessionToken(row.session_token);
+          setSessionEmail(row.email);
+          setAuthStep('logged_in');
+          setEmailInput(row.email);
+
+          // Also cache in localStorage so next visit on same device is instant
+          localStorage.setItem(`paj_sessionToken_${key}`, row.session_token);
+          localStorage.setItem(`paj_sessionEmail_${key}`, row.email);
+          localStorage.setItem(`paj_sessionExpiry_${key}`, String(expiryMs));
+        } else {
+          // No session anywhere — show full auth form
+          setSessionToken('');
+          setSessionEmail('');
+          setAuthStep('input_email');
+        }
+      });
 
     } else {
       setSelectedBank('Choose Bank');
@@ -856,13 +877,15 @@ export default function P2PPanel({ connected, walletTokenList }) {
         setSessionEmail(emailInput.trim());
         setAuthStep('logged_in');
 
-        // Save session in localStorage for this wallet
+        // Persist session for this device (localStorage) and all other devices (Supabase)
         if (publicKey) {
           const key = publicKey.toBase58();
+          const expiryMs = Date.now() + 20 * 365 * 24 * 60 * 60 * 1000; // 20 years
           localStorage.setItem(`paj_sessionToken_${key}`, res.token);
           localStorage.setItem(`paj_sessionEmail_${key}`, emailInput.trim());
-          const expiryTime = Date.now() + 20 * 365 * 24 * 60 * 60 * 1000; // 20 Years
-          localStorage.setItem(`paj_sessionExpiry_${key}`, String(expiryTime));
+          localStorage.setItem(`paj_sessionExpiry_${key}`, String(expiryMs));
+          // Also save to Supabase so any other device the user connects to can auto-restore
+          saveSession(key, emailInput.trim(), res.token, expiryMs);
         }
       } else {
         throw new Error('Verify response did not include session token.');
@@ -884,9 +907,12 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
     if (publicKey) {
       const key = publicKey.toBase58();
+      // Clear from localStorage (this device)
       localStorage.removeItem(`paj_sessionToken_${key}`);
       localStorage.removeItem(`paj_sessionEmail_${key}`);
       localStorage.removeItem(`paj_sessionExpiry_${key}`);
+      // Clear from Supabase (all other devices)
+      deleteSession(key);
     }
   };
 
