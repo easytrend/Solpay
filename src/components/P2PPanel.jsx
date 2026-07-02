@@ -487,12 +487,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
     }
   }, [isLiveRoute, PAJCASH_API_KEY]);
 
-  // ── Single-active-session: restore + validate on wallet connect ───────────────
-  // Rules:
-  //  • If localStorage has a token → validate it against Supabase.
-  //    • Tokens match → this device is still primary → auto-login.
-  //    • Tokens differ / no Supabase record → another device took over → KICK.
-  //  • No localStorage (new device) → always show the full email+OTP form.
+  // ── Restore session: localStorage (same device, instant) → Supabase (any device) ──
+  // Any device that connects the same wallet auto-logs in — no re-verification needed.
   useEffect(() => {
     setPayoutLogs([]);
 
@@ -510,43 +506,47 @@ export default function P2PPanel({ connected, walletTokenList }) {
     const cachedToken  = localStorage.getItem(`paj_sessionToken_${key}`);
     const cachedEmail  = localStorage.getItem(`paj_sessionEmail_${key}`);
     const cachedExpiry = localStorage.getItem(`paj_sessionExpiry_${key}`);
-    const hasLocalSession = cachedToken && cachedExpiry && Date.now() < Number(cachedExpiry);
 
-    if (!hasLocalSession) {
-      // New device or expired — clear stale data, show email form immediately
-      localStorage.removeItem(`paj_sessionToken_${key}`);
-      localStorage.removeItem(`paj_sessionEmail_${key}`);
-      localStorage.removeItem(`paj_sessionExpiry_${key}`);
-      setSessionToken('');
-      setSessionEmail('');
-      setAuthStep('input_email');
+    // ① Same device: restore from localStorage instantly (no network)
+    if (cachedToken && cachedExpiry && Date.now() < Number(cachedExpiry)) {
+      setSessionToken(cachedToken);
+      setSessionEmail(cachedEmail || '');
+      setAuthStep('logged_in');
       return;
     }
 
-    // Has a local token — validate against Supabase before auto-logging in
-    setAuthStep('checking'); // Show spinner while we verify
+    // localStorage expired or missing — clear stale entries
+    localStorage.removeItem(`paj_sessionToken_${key}`);
+    localStorage.removeItem(`paj_sessionEmail_${key}`);
+    localStorage.removeItem(`paj_sessionExpiry_${key}`);
+
+    // ② New / other device: fetch session from Supabase by wallet address
+    setAuthStep('checking');
     loadSession(key)
       .then(row => {
-        if (row && row.session_token === cachedToken) {
-          // ✅ Supabase confirms this device is still primary — auto-login
-          setSessionToken(cachedToken);
-          setSessionEmail(cachedEmail || '');
+        if (row) {
+          // Found a valid session in Supabase — auto-login, no email prompt
+          const expiryMs = new Date(row.expires_at).getTime();
+          setSessionToken(row.session_token);
+          setSessionEmail(row.email);
+          setEmailInput(row.email);
           setAuthStep('logged_in');
+          // Backfill localStorage so future visits on this device are instant
+          localStorage.setItem(`paj_sessionToken_${key}`, row.session_token);
+          localStorage.setItem(`paj_sessionEmail_${key}`, row.email);
+          localStorage.setItem(`paj_sessionExpiry_${key}`, String(expiryMs));
         } else {
-          // ❌ Kicked: another device verified and overwrote the Supabase record
-          localStorage.removeItem(`paj_sessionToken_${key}`);
-          localStorage.removeItem(`paj_sessionEmail_${key}`);
-          localStorage.removeItem(`paj_sessionExpiry_${key}`);
+          // No session anywhere — show full email + OTP form
           setSessionToken('');
           setSessionEmail('');
           setAuthStep('input_email');
         }
       })
       .catch(() => {
-        // Supabase unreachable — fall back gracefully to local token
-        setSessionToken(cachedToken);
-        setSessionEmail(cachedEmail || '');
-        setAuthStep('logged_in');
+        // Supabase unreachable — show form so user can verify manually
+        setSessionToken('');
+        setSessionEmail('');
+        setAuthStep('input_email');
       });
   }, [publicKey]);
 
@@ -2001,7 +2001,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
       {/* ── LIVE OFFRAMP ROUTE ── */}
       {isLiveRoute ? (
         authStep === 'checking' ? (
-          // Validating session against Supabase — show brief spinner
+          // Fetching session from Supabase — brief spinner
           <div style={{
             display: 'flex', flexDirection: 'column', alignItems: 'center',
             justifyContent: 'center', padding: '40px 24px', gap: '14px',
@@ -2009,7 +2009,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
             borderRadius: '16px', marginBottom: '1.25rem',
           }}>
             <span className="p2p-mini-spinner" style={{ width: '24px', height: '24px', borderWidth: '3px' }} />
-            <span style={{ fontSize: '13px', color: 'rgba(255,255,255,0.45)' }}>Checking session...</span>
+            <span style={{ fontSize: '13px', color: 'rgba(255,255,255,0.45)' }}>Restoring session...</span>
           </div>
         ) : authStep !== 'logged_in' ? (
           <div className="p2p-auth-container" style={{
