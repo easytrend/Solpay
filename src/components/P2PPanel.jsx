@@ -21,7 +21,7 @@ import {
 import { getQuote, buildSwapTransaction } from '../services/swapService';
 import { logP2PTransaction, syncP2PTransactionStatuses, updateP2PTransactionStatus, saveSession, loadSession, deleteSession } from '../services/supabase';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
-import { PublicKey, Transaction, TransactionInstruction, SystemProgram, Keypair, VersionedTransaction } from '@solana/web3.js';
+import { PublicKey, Transaction, TransactionInstruction, SystemProgram, VersionedTransaction } from '@solana/web3.js';
 import {
   getAssociatedTokenAddressSync,
   createAssociatedTokenAccountIdempotentInstruction,
@@ -1468,19 +1468,18 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
       if (!order?.address) throw new Error('PajCash did not return a deposit address for this order.');
 
-      // 2. Load and verify relayer configuration
-      let relayerKp = null;
+      // 2. Check if server-side relayer is configured
+      // VITE_RELAYER_PUBLIC_KEY is safe to expose — it's just a public key.
+      // The private key lives in RELAYER_SECRET_KEY on the server (api/relay.js).
+      const relayerPubkeyStr = import.meta.env.VITE_RELAYER_PUBLIC_KEY;
+      let relayerPublicKey = null;
       let usingRelayer = false;
-
-      const relayerSecretEnv = import.meta.env.VITE_RELAYER_SECRET_KEY;
-      if (relayerSecretEnv) {
+      if (relayerPubkeyStr) {
         try {
-          const keyArray = JSON.parse(relayerSecretEnv);
-          relayerKp = Keypair.fromSecretKey(new Uint8Array(keyArray));
-          const relayerLamports = await connection.getBalance(relayerKp.publicKey).catch(() => 0);
-          usingRelayer = relayerLamports >= 5000; // need at least ~5000 lamports
+          relayerPublicKey = new PublicKey(relayerPubkeyStr);
+          usingRelayer = true;
         } catch {
-          relayerKp = null;
+          relayerPublicKey = null;
           usingRelayer = false;
         }
       }
@@ -1488,7 +1487,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
       // 3. Build on-chain Solana transaction
       const { blockhash } = await connection.getLatestBlockhash('confirmed');
       const transaction = new Transaction();
-      transaction.feePayer = usingRelayer ? relayerKp.publicKey : publicKey;
+      // If relayer is active, set it as feePayer → user's wallet shows 0 fees
+      transaction.feePayer = usingRelayer ? relayerPublicKey : publicKey;
       transaction.recentBlockhash = blockhash;
 
       const depositPubkey = new PublicKey(order.address);
@@ -1518,7 +1518,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
         transaction.add(
           createAssociatedTokenAccountIdempotentInstruction(
-            usingRelayer ? relayerKp.publicKey : publicKey, receiverATA, depositPubkey, mintPubkey, tokenProgram
+            // Relayer pays rent for ATA creation too (not user)
+            usingRelayer ? relayerPublicKey : publicKey, receiverATA, depositPubkey, mintPubkey, tokenProgram
           )
         );
         transaction.add(
@@ -1538,7 +1539,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
       );
 
       verifyOfframpTransaction(transaction, order.address, liveSelectedToken, publicKey,
-        usingRelayer ? relayerKp.publicKey : null);
+        usingRelayer ? relayerPublicKey : null);
 
       // 5. Pre-flight simulation
       const sim = await connection.simulateTransaction(transaction);
@@ -1546,18 +1547,33 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
       // 6. Sign & send
       let sig;
-      if (usingRelayer && relayerKp && signTransaction) {
-        // Relayer signs first as the fee payer so the user's wallet sees the transaction is sponsored
-        transaction.partialSign(relayerKp);
-        
-        // User signs second
+      if (usingRelayer && signTransaction) {
+        // User signs the transaction — since feePayer = relayerPublicKey (not user),
+        // the wallet shows ZERO fees to the user.
         const signedTx = await signTransaction(transaction);
-        
-        sig = await connection.sendRawTransaction(signedTx.serialize(), {
-          skipPreflight: false, preflightCommitment: 'confirmed',
+
+        // Serialize the user-signed tx and POST it to the secure server-side relay endpoint.
+        // The server loads RELAYER_SECRET_KEY, adds the relayer's signature, and broadcasts.
+        const serialized = Buffer.from(
+          signedTx.serialize({ requireAllSignatures: false })
+        ).toString('base64');
+
+        const relayRes = await fetch('/api/relay', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ serializedTransaction: serialized }),
         });
+
+        if (!relayRes.ok) {
+          const errData = await relayRes.json().catch(() => ({}));
+          throw new Error(errData.error || `Relay API failed: ${relayRes.status}`);
+        }
+
+        const { signature } = await relayRes.json();
+        sig = signature;
         setRelayerActive(true);
       } else {
+        // No relayer — user pays gas normally
         sig = await sendTransaction(transaction, connection);
         setRelayerActive(false);
       }
