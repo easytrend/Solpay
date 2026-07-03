@@ -2503,11 +2503,6 @@ export default function P2PPanel({ connected, walletTokenList }) {
               {submitting && <span className="p2p-mini-spinner" style={{ marginRight: '6px' }} />}
               {submitting ? 'Processing...' : (!isLiveRoute || apiError ? 'Payout Gateway Offline' : 'Send')}
             </button>
-            {relayerActive && (
-              <div style={{ textAlign: 'center', marginTop: '6px', fontSize: '10px', color: 'var(--lime)', opacity: 0.75 }}>
-                ⚡ Gas fee sponsored by relayer
-              </div>
-            )}
         </>
       ) ) : (
         /* ── Buy (Onramp) Mode — Nigeria only ── */
