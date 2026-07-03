@@ -1473,7 +1473,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
       // The private key lives in RELAYER_SECRET_KEY on the server (api/relay.js).
       const relayerPubkeyStr = import.meta.env.VITE_RELAYER_PUBLIC_KEY;
       let relayerPublicKey = null;
-      let usingRelayer = false;
+      let usingRelayer = false; // Temporarily disabled: we will continue implementation tomorrow
+      /*
       if (relayerPubkeyStr) {
         try {
           relayerPublicKey = new PublicKey(relayerPubkeyStr);
@@ -1483,6 +1484,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
           usingRelayer = false;
         }
       }
+      */
 
       // 3. Build on-chain Solana transaction
       const { blockhash } = await connection.getLatestBlockhash('confirmed');
