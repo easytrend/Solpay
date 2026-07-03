@@ -1468,10 +1468,27 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
       if (!order?.address) throw new Error('PajCash did not return a deposit address for this order.');
 
-      // 2. Build on-chain Solana transaction
+      // 2. Load and verify relayer configuration
+      let relayerKp = null;
+      let usingRelayer = false;
+
+      const relayerSecretEnv = import.meta.env.VITE_RELAYER_SECRET_KEY;
+      if (relayerSecretEnv) {
+        try {
+          const keyArray = JSON.parse(relayerSecretEnv);
+          relayerKp = Keypair.fromSecretKey(new Uint8Array(keyArray));
+          const relayerLamports = await connection.getBalance(relayerKp.publicKey).catch(() => 0);
+          usingRelayer = relayerLamports >= 5000; // need at least ~5000 lamports
+        } catch {
+          relayerKp = null;
+          usingRelayer = false;
+        }
+      }
+
+      // 3. Build on-chain Solana transaction
       const { blockhash } = await connection.getLatestBlockhash('confirmed');
       const transaction = new Transaction();
-      transaction.feePayer = publicKey;
+      transaction.feePayer = usingRelayer ? relayerKp.publicKey : publicKey;
       transaction.recentBlockhash = blockhash;
 
       const depositPubkey = new PublicKey(order.address);
@@ -1501,7 +1518,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
         transaction.add(
           createAssociatedTokenAccountIdempotentInstruction(
-            publicKey, receiverATA, depositPubkey, mintPubkey, tokenProgram
+            usingRelayer ? relayerKp.publicKey : publicKey, receiverATA, depositPubkey, mintPubkey, tokenProgram
           )
         );
         transaction.add(
@@ -1511,7 +1528,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
         );
       }
 
-      // 3. Attach on-chain memo with order ID
+      // 4. Attach on-chain memo with order ID
       transaction.add(
         new TransactionInstruction({
           keys: [],
@@ -1519,32 +1536,6 @@ export default function P2PPanel({ connected, walletTokenList }) {
           data: new TextEncoder().encode(`fiatwallet:pajcash:offramp:${order.id}`),
         })
       );
-
-      // 4. Verify transaction integrity before signing
-      // ── Relayer fee sponsorship ───────────────────────────────────────────────────
-      let relayerKp = null;
-      let usingRelayer = false;
-
-      const relayerSecretEnv = import.meta.env.VITE_RELAYER_SECRET_KEY;
-      if (relayerSecretEnv) {
-        try {
-          const keyArray = JSON.parse(relayerSecretEnv);
-          relayerKp = Keypair.fromSecretKey(new Uint8Array(keyArray));
-          const relayerLamports = await connection.getBalance(relayerKp.publicKey).catch(() => 0);
-          usingRelayer = relayerLamports >= 5000; // need at least ~5000 lamports
-        } catch {
-          relayerKp = null;
-          usingRelayer = false;
-        }
-      }
-
-      if (usingRelayer && relayerKp && signTransaction) {
-        // Relayer pays gas — set relayer as fee payer
-        transaction.feePayer = relayerKp.publicKey;
-      } else {
-        // User pays gas (default)
-        transaction.feePayer = publicKey;
-      }
 
       verifyOfframpTransaction(transaction, order.address, liveSelectedToken, publicKey,
         usingRelayer ? relayerKp.publicKey : null);
