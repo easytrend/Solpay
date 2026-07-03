@@ -320,6 +320,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const [onrampError, setOnrampError] = useState(null);
   const [onrampStatus, setOnrampStatus] = useState(null); // 'pending'|'processing'|'completed'|'failed'
   const onrampSocketRef = useRef(null);
+  const offrampSocketRef = useRef(null);
   const [copiedOnrampAcct, setCopiedOnrampAcct] = useState(false);
   const [showOnrampTooltip, setShowOnrampTooltip] = useState(false);
 
@@ -1622,6 +1623,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
         depositAddress: order.address,
       });
 
+      // Show modal immediately with PENDING status
       setSuccessDetails({
         amount: `${estCryptoAmount.toFixed(4)} ${liveSelectedToken.symbol}`,
         fiat: `${selectedCountry.symbol}${fiatAmountText}`,
@@ -1630,17 +1632,51 @@ export default function P2PPanel({ connected, walletTokenList }) {
         name: accountName || 'Account Holder',
         orderId: order.id,
         sig,
-        // status comes from the API — mark as PENDING initially; history refresh will update
         status: 'PENDING',
       });
       setShowSuccess(true);
-      // Clear form fields in the UI. Keep bank cache in localStorage so that
-      // the user can trigger autofill by typing the first 4 digits of the account number later.
+
+      // Clear form fields in the UI
       setAmount('');
       setAccountNumber('');
       setAccountName('');
       setSelectedBank('Choose Bank');
-      // Refresh history after 2s to get updated status from API
+
+      // Start WebSocket observer — updates the modal status live when PajCash confirms
+      if (offrampSocketRef.current) {
+        try { offrampSocketRef.current.disconnect(); } catch { /* ignore */ }
+        offrampSocketRef.current = null;
+      }
+
+      const observer = observeOrder({
+        orderId: order.id,
+        onOrderUpdate: (data) => {
+          const newStatus = (data?.status || '').toUpperCase();
+          if (newStatus === 'COMPLETED' || newStatus === 'SUCCESSFUL' || newStatus === 'CONFIRMED') {
+            // Update modal to show TRANSFER CONFIRMED
+            setSuccessDetails(prev => prev ? { ...prev, status: newStatus } : prev);
+            loadPayoutLogs();
+            if (offrampSocketRef.current) {
+              try { offrampSocketRef.current.disconnect(); } catch { /* ignore */ }
+              offrampSocketRef.current = null;
+            }
+          } else if (newStatus === 'FAILED') {
+            setSuccessDetails(prev => prev ? { ...prev, status: 'FAILED' } : prev);
+            loadPayoutLogs();
+            if (offrampSocketRef.current) {
+              try { offrampSocketRef.current.disconnect(); } catch { /* ignore */ }
+              offrampSocketRef.current = null;
+            }
+          } else if (newStatus === 'PAID') {
+            setSuccessDetails(prev => prev ? { ...prev, status: 'PAID' } : prev);
+            loadPayoutLogs();
+          }
+        }
+      });
+      offrampSocketRef.current = observer;
+      observer.connect().catch(() => { /* ignore connection error */ });
+
+      // Refresh history after 2s
       setTimeout(loadPayoutLogs, 2000);
     } catch (err) {
       console.error('Transaction failed:', err);
@@ -3101,7 +3137,14 @@ export default function P2PPanel({ connected, walletTokenList }) {
               {/* Close Button */}
               <button 
                 className="send-btn" 
-                onClick={() => { setShowSuccess(false); setSuccessDetails(null); }} 
+                onClick={() => {
+                  setShowSuccess(false);
+                  setSuccessDetails(null);
+                  if (offrampSocketRef.current) {
+                    try { offrampSocketRef.current.disconnect(); } catch { /* ignore */ }
+                    offrampSocketRef.current = null;
+                  }
+                }} 
                 style={{ 
                   width: '100%', 
                   padding: '14px', 
