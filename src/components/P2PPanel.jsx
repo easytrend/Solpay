@@ -1547,9 +1547,12 @@ export default function P2PPanel({ connected, walletTokenList }) {
       // 6. Sign & send
       let sig;
       if (usingRelayer && relayerKp && signTransaction) {
-        // User signs first, then relayer co-signs as fee payer
+        // Relayer signs first as the fee payer so the user's wallet sees the transaction is sponsored
+        transaction.partialSign(relayerKp);
+        
+        // User signs second
         const signedTx = await signTransaction(transaction);
-        signedTx.partialSign(relayerKp);
+        
         sig = await connection.sendRawTransaction(signedTx.serialize(), {
           skipPreflight: false, preflightCommitment: 'confirmed',
         });
