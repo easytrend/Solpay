@@ -9,15 +9,6 @@
  *   VITE_RPC_URL        — Optional custom RPC endpoint (reused from frontend env)
  */
 
-import {
-  Connection,
-  Transaction,
-  Keypair,
-  clusterApiUrl,
-  PublicKey,
-} from '@solana/web3.js';
-
-// ── Allowed Solana programs ─────────────────────────────────────────────────
 const ALLOWED_PROGRAMS = new Set([
   'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', // SPL Token
   'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJe1bV', // Associated Token Program
@@ -59,38 +50,6 @@ function decodeBase58(string) {
   return new Uint8Array(bytes.reverse());
 }
 
-// Robust Keypair loader supporting both JSON array and Base58 string
-function loadKeypair(secretEnv) {
-  if (!secretEnv) throw new Error('RELAYER_SECRET_KEY env var is empty');
-  let clean = secretEnv.trim();
-
-  // Strip wrapping double quotes if present
-  if (clean.startsWith('"') && clean.endsWith('"')) {
-    clean = clean.slice(1, -1);
-  }
-  // Strip wrapping single quotes if present
-  if (clean.startsWith("'") && clean.endsWith("'")) {
-    clean = clean.slice(1, -1);
-  }
-
-  if (clean.startsWith('[')) {
-    try {
-      const arr = JSON.parse(clean);
-      return Keypair.fromSecretKey(new Uint8Array(arr));
-    } catch (e) {
-      throw new Error(`Invalid JSON array format in RELAYER_SECRET_KEY: ${e.message}`);
-    }
-  }
-
-  // Fallback to base58 decoding
-  try {
-    const bytes = decodeBase58(clean);
-    return Keypair.fromSecretKey(bytes);
-  } catch (e) {
-    throw new Error('RELAYER_SECRET_KEY is neither a valid JSON array nor a valid Base58 string');
-  }
-}
-
 export default async function handler(req, res) {
   // CORS headers for browser fetch
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -103,6 +62,51 @@ export default async function handler(req, res) {
   }
 
   try {
+    // ── Dynamic Import of @solana/web3.js to catch bundler/load errors ─────
+    let web3;
+    try {
+      web3 = await import('@solana/web3.js');
+    } catch (importErr) {
+      return res.status(500).json({
+        error: 'Failed to load @solana/web3.js dependency on the server: ' + importErr.message,
+        stack: importErr.stack
+      });
+    }
+
+    const { Connection, Transaction, Keypair, clusterApiUrl, PublicKey } = web3;
+
+    // Robust Keypair loader supporting both JSON array and Base58 string
+    const loadKeypair = (secretEnv) => {
+      if (!secretEnv) throw new Error('RELAYER_SECRET_KEY env var is empty');
+      let clean = secretEnv.trim();
+
+      // Strip wrapping double quotes if present
+      if (clean.startsWith('"') && clean.endsWith('"')) {
+        clean = clean.slice(1, -1);
+      }
+      // Strip wrapping single quotes if present
+      if (clean.startsWith("'") && clean.endsWith("'")) {
+        clean = clean.slice(1, -1);
+      }
+
+      if (clean.startsWith('[')) {
+        try {
+          const arr = JSON.parse(clean);
+          return Keypair.fromSecretKey(new Uint8Array(arr));
+        } catch (e) {
+          throw new Error(`Invalid JSON array format in RELAYER_SECRET_KEY: ${e.message}`);
+        }
+      }
+
+      // Fallback to base58 decoding
+      try {
+        const bytes = decodeBase58(clean);
+        return Keypair.fromSecretKey(bytes);
+      } catch (e) {
+        throw new Error('RELAYER_SECRET_KEY is neither a valid JSON array nor a valid Base58 string');
+      }
+    };
+
     // ── Load and parse relayer keypair ──────────────────────────────────────
     const relayerSecret = process.env.RELAYER_SECRET_KEY;
     if (!relayerSecret) {
@@ -157,7 +161,7 @@ export default async function handler(req, res) {
     }
 
     // 3. Must have our memo to confirm it's a genuine offramp tx
-    const decoder = new TextEncoder();
+    const decoder = new TextDecoder();
     const hasMemo = transaction.instructions.some(ix => {
       const progId = ix.programId.toBase58();
       const isMemo =
@@ -175,7 +179,8 @@ export default async function handler(req, res) {
     }
 
     // ── Connect and check relayer SOL balance ─────────────────────────────────
-    const rpcUrl = process.env.VITE_RPC_URL || clusterApiUrl('mainnet-beta');
+    // Fall back to a reliable public endpoint (Ankr) to avoid default rate-limits on Vercel IPs
+    const rpcUrl = process.env.VITE_RPC_URL || 'https://rpc.ankr.com/solana';
     const connection = new Connection(rpcUrl, 'confirmed');
 
     let relayerBalance;
