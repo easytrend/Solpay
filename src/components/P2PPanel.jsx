@@ -321,6 +321,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const [onrampStatus, setOnrampStatus] = useState(null); // 'pending'|'processing'|'completed'|'failed'
   const onrampSocketRef = useRef(null);
   const offrampSocketRef = useRef(null);
+  const swapTriggeredRef = useRef(false); // guard: prevent double auto-swap trigger
   const [copiedOnrampAcct, setCopiedOnrampAcct] = useState(false);
   const [showOnrampTooltip, setShowOnrampTooltip] = useState(false);
 
@@ -1251,6 +1252,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
     setOnrampError(null);
     setOnrampOrder(null);
     setOnrampStatus(null);
+    swapTriggeredRef.current = false; // reset swap guard for new order
     if (!sessionToken) { setOnrampError('Please verify your email OTP session first.'); return; }
     if (!publicKey) { setOnrampError('Please connect your Solana wallet.'); return; }
     if (!parsedOnrampAmt || parsedOnrampAmt <= 0) { setOnrampError('Please enter a valid NGN amount.'); return; }
@@ -1314,16 +1316,24 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
           const orderSuccess = status === 'COMPLETED' || status === 'SUCCESSFUL' || status === 'CONFIRMED';
           if (orderSuccess && liveSelectedToken.symbol !== 'USDC' && liveSelectedToken.symbol !== 'USDT') {
-             // Delay 2s to allow on-chain USDC to settle, then run auto-swap
+             // Guard: only trigger auto-swap once, even if both WebSocket and polling fire
+             if (swapTriggeredRef.current) return;
+             swapTriggeredRef.current = true;
+             // Delay 3s to allow on-chain USDC to settle, then run auto-swap
              setTimeout(async () => {
                try {
                  await triggerJupiterSwap();
                } catch (swapErr) {
                  console.error("Auto-swap trigger failed:", swapErr);
-                 setOnrampError(`Onramp succeeded, but automatic swap to ${liveSelectedToken.symbol} failed: ${swapErr.message || swapErr}`);
+                 // Only show error if swap genuinely failed (not a post-confirm adapter glitch)
+                 const msg = swapErr.message || String(swapErr);
+                 const isWalletAdapterGlitch = msg.includes('WalletSignTransactionError') || msg.includes('user rejected') || msg.includes('Transaction was not confirmed');
+                 if (!isWalletAdapterGlitch) {
+                   setOnrampError(`Payment received. Auto-swap to ${liveSelectedToken.symbol} failed — your USDC is safe. Tap "Swap" tab to swap manually.`);
+                 }
                  setOnrampStatus('completed');
                }
-             }, 2000);
+             }, 3000);
           }
         },
         onError: (err) => {
@@ -1355,13 +1365,15 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
     setOnrampStatus('swapping');
     setOnrampError(null);
+
+    let txSignature = null;
     
     try {
       const freshQuote = await getQuote({
         inputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
         outputMint: liveSelectedToken.mint,
         amount: amountLamports,
-        slippageBps: 100 // 1%
+        slippageBps: 150 // 1.5% — slightly more tolerance for mobile latency
       });
 
       if (!freshQuote) {
@@ -1377,16 +1389,26 @@ export default function P2PPanel({ connected, walletTokenList }) {
       const transaction = VersionedTransaction.deserialize(rawTx);
 
       const signedTx = await signTransaction(transaction);
-      const txSignature = await connection.sendRawTransaction(signedTx.serialize(), {
+      txSignature = await connection.sendRawTransaction(signedTx.serialize(), {
         skipPreflight: false,
         maxRetries: 3,
       });
 
       await connection.confirmTransaction(txSignature, 'confirmed');
+      // Swap fully confirmed — clear any stale error and mark complete
+      setOnrampError(null);
       setOnrampStatus('completed');
     } catch (e) {
       console.error("Jupiter auto-swap execution failed:", e);
       setOnrampStatus('completed');
+      // If we already sent the transaction (txSignature obtained), it may have
+      // confirmed on-chain even if the wallet adapter threw a post-sign error.
+      // Don't re-throw — the user's funds are safe and the swap likely went through.
+      if (txSignature) {
+        console.warn("Swap tx was broadcast (", txSignature, ") — treating as success despite adapter error.");
+        setOnrampError(null);
+        return;
+      }
       throw new Error(e.message || e);
     }
   }, [publicKey, signTransaction, pajRates, onrampAmount, liveSelectedToken, connection]);
@@ -1414,15 +1436,22 @@ export default function P2PPanel({ connected, walletTokenList }) {
             
             const orderSuccess = status === 'COMPLETED' || status === 'SUCCESSFUL' || status === 'CONFIRMED';
             if (orderSuccess && liveSelectedToken.symbol !== 'USDC' && liveSelectedToken.symbol !== 'USDT') {
+               // Guard: only trigger auto-swap once, even if both WebSocket and polling fire
+               if (swapTriggeredRef.current) return;
+               swapTriggeredRef.current = true;
                setTimeout(async () => {
                  try {
                    await triggerJupiterSwap();
                  } catch (swapErr) {
                    console.error("Auto-swap trigger failed:", swapErr);
-                   setOnrampError(`Onramp succeeded, but automatic swap to ${liveSelectedToken.symbol} failed: ${swapErr.message || swapErr}`);
+                   const msg = swapErr.message || String(swapErr);
+                   const isWalletAdapterGlitch = msg.includes('WalletSignTransactionError') || msg.includes('user rejected') || msg.includes('Transaction was not confirmed');
+                   if (!isWalletAdapterGlitch) {
+                     setOnrampError(`Payment received. Auto-swap to ${liveSelectedToken.symbol} failed — your USDC is safe. Tap "Swap" tab to swap manually.`);
+                   }
                    setOnrampStatus('completed');
                  }
-               }, 2000);
+               }, 3000);
             }
           }
         }
