@@ -25,6 +25,7 @@ const ALLOWED_PROGRAMS = new Set([
   'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr', // Memo Program v1
   'Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo',  // Memo Program v2
   '11111111111111111111111111111111',               // System Program
+  'ComputeBudget111111111111111111111111111111',  // Compute Budget Program
 ]);
 
 const MEMO_PREFIX = 'fiatwallet:pajcash:offramp:';
