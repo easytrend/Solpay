@@ -67,8 +67,26 @@ export async function initiateSession(emailOrPhone, apiKey) {
  */
 export async function verifySession(emailOrPhone, otp, apiKey) {
   try {
+    // Generate a deterministic valid UUID format from the email
+    // This prevents hitting the 'maximum 2 devices' limit on PajCash
+    // by making all logins for this email look like the same virtual device.
+    let hashStr = '00000000000000000000000000000000';
+    if (crypto && crypto.subtle && TextEncoder) {
+      const msgUint8 = new TextEncoder().encode(emailOrPhone.toLowerCase().trim());
+      const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      hashStr = hashArray.map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 32);
+    } else {
+      // Fallback simple hash if Web Crypto API is unavailable
+      let h = 0;
+      for (let i = 0; i < emailOrPhone.length; i++) h = Math.imul(31, h) + emailOrPhone.charCodeAt(i) | 0;
+      hashStr = Math.abs(h).toString(16).padStart(32, '0');
+    }
+
+    const deterministicUuid = `${hashStr.substring(0,8)}-${hashStr.substring(8,12)}-4${hashStr.substring(13,16)}-8${hashStr.substring(17,20)}-${hashStr.substring(20,32)}`;
+
     const device = {
-      uuid: 'fiatwallet-browser-session-' + encodeURIComponent(emailOrPhone),
+      uuid: deterministicUuid,
       device: 'Browser',
       os: 'Web',
       browser: 'WebBrowser'
