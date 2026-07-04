@@ -1149,8 +1149,15 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const ngnRate = tokenPriceUsd * activeNgnRate;
   const parsedAmt = parseFloat(amount) || 0;
   const estCryptoAmount = ngnRate > 0 ? (parsedAmt / ngnRate) : 0;
-  const platformFee = 0;
-  const baseCryptoAmount = estCryptoAmount;
+
+  // ── Platform Fee: $0.10 in CRYPTO on every On/Offramp ──────────────────────
+  // Fee is collected in the user's chosen crypto — never from the NGN payout.
+  // Offramp: user sends estCryptoAmount + fee_in_token; NGN payout is for the full trade amount.
+  // Onramp:  user pays NGN; receives gross USDC minus 0.10 USDC.
+  const PLATFORM_FEE_USD = 0.10;
+  const platformFeeInToken = tokenPriceUsd > 0 ? PLATFORM_FEE_USD / tokenPriceUsd : 0; // $0.10 in token units
+  const platformFee = PLATFORM_FEE_USD; // passed to PajCash as businessUSDCFee
+  const baseCryptoAmount = estCryptoAmount + platformFeeInToken; // user sends trade + fee in their token
   const fiatAmountText = parsedAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   const parsedOnrampAmt = parseFloat(onrampAmount) || 0;
@@ -2490,6 +2497,11 @@ export default function P2PPanel({ connected, walletTokenList }) {
                   <span style={{ color: 'rgba(255,255,255,0.38)' }}>
                     1 {liveSelectedToken.symbol} = {selectedCountry.symbol}{ngnRate.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </span>
+                  {amount && Number(amount) > 0 && (
+                    <span style={{ display: 'block', marginTop: '3px', color: 'var(--lime)', fontWeight: '600', fontSize: '10.5px', letterSpacing: '0.01em' }}>
+                      +fee $0.10
+                    </span>
+                  )}
                 </div>
               )}
             </div>
@@ -2518,7 +2530,15 @@ export default function P2PPanel({ connected, walletTokenList }) {
               style={{ opacity: (submitting || !isFormValid) ? 0.6 : 1, cursor: (submitting || !isFormValid) ? 'not-allowed' : 'pointer' }}
             >
               {submitting && <span className="p2p-mini-spinner" style={{ marginRight: '6px' }} />}
-              {submitting ? 'Processing...' : (!isLiveRoute || apiError ? 'Payout Gateway Offline' : 'Send')}
+              {submitting
+                ? 'Processing...'
+                : (!isLiveRoute || apiError
+                  ? 'Payout Gateway Offline'
+                  : (amount && Number(amount) > 0 && baseCryptoAmount > 0
+                    ? `SEND ${baseCryptoAmount.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 6 })} ${liveSelectedToken.symbol}`
+                    : 'Send'
+                  )
+                )}
             </button>
         </>
       ) ) : (
