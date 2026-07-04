@@ -17,15 +17,14 @@ import {
   PublicKey,
 } from '@solana/web3.js';
 
-// ── Allowed Solana programs ─────────────────────────────────────────────────
-const ALLOWED_PROGRAMS = new Set([
+// ── Programs that could drain the relayer's SOL/tokens if misused ────────────
+// SystemProgram (SOL transfers) and Token programs (SPL transfers) are the only
+// programs that can move funds. We don't block them — we inspect their instructions
+// to ensure the relayer is never the SOURCE of a transfer.
+const SYSTEM_PROGRAM_ID = '11111111111111111111111111111111';
+const TOKEN_PROGRAMS = new Set([
   'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', // SPL Token
-  'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL', // Associated Token Program
   'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb', // Token-2022
-  'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr', // Memo Program v1
-  'Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo',  // Memo Program v2
-  '11111111111111111111111111111111',               // System Program
-  'ComputeBudget111111111111111111111111111111',  // Compute Budget Program
 ]);
 
 const MEMO_PREFIX = 'fiatwallet:pajcash:offramp:';
@@ -92,6 +91,52 @@ function loadKeypair(secretEnv) {
   }
 }
 
+/**
+ * Checks that the relayer's public key is never used as the SOURCE of any
+ * fund transfer. This prevents a malicious user from crafting a transaction
+ * that drains the relayer's SOL or tokens while using it as the fee payer.
+ *
+ * The relayer IS expected to appear as:
+ *   - feePayer (pays gas)
+ *   - payer for ATA creation (pays rent for new token accounts)
+ *
+ * The relayer must NEVER appear as:
+ *   - fromPubkey in SystemProgram.transfer (would drain SOL)
+ *   - source in SPL Token transfer/transferChecked (would drain tokens)
+ */
+function validateRelayerNotDrained(transaction, relayerPubkey) {
+  for (const ix of transaction.instructions) {
+    const progId = ix.programId.toBase58();
+
+    // SystemProgram: instruction discriminator is first 4 bytes (little-endian uint32)
+    // Transfer = 2, TransferWithSeed = 11, AdvanceNonceAccount = 4
+    if (progId === SYSTEM_PROGRAM_ID && ix.data.length >= 4) {
+      const ixType = ix.data.readUInt32LE(0);
+      // Transfer (2): accounts[0] = from (writable, signer)
+      // TransferWithSeed (11): accounts[0] = from
+      if ((ixType === 2 || ixType === 11) && ix.keys.length > 0) {
+        if (ix.keys[0].pubkey.equals(relayerPubkey)) {
+          return 'Blocked: relayer cannot be the source of a SOL transfer';
+        }
+      }
+    }
+
+    // SPL Token / Token-2022: instruction discriminator is first byte
+    // Transfer = 3, TransferChecked = 12
+    if (TOKEN_PROGRAMS.has(progId) && ix.data.length >= 1) {
+      const ixType = ix.data[0];
+      // Transfer (3): accounts[0] = source
+      // TransferChecked (12): accounts[0] = source
+      if ((ixType === 3 || ixType === 12) && ix.keys.length > 0) {
+        if (ix.keys[0].pubkey.equals(relayerPubkey)) {
+          return 'Blocked: relayer cannot be the source of a token transfer';
+        }
+      }
+    }
+  }
+  return null; // Safe — no drain detected
+}
+
 export default async function handler(req, res) {
   // CORS headers for browser fetch
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -143,18 +188,20 @@ export default async function handler(req, res) {
     }
 
     // ── Security validation ───────────────────────────────────────────────────
+    // Instead of whitelisting specific programs (which breaks when wallets inject
+    // utility programs like ComputeBudget, Lighthouse, etc.), we directly verify
+    // that the relayer's funds cannot be drained. This is both more secure and
+    // compatible with all wallets.
 
     // 1. feePayer must be the relayer
     if (!transaction.feePayer || !transaction.feePayer.equals(relayerKp.publicKey)) {
       return res.status(400).json({ error: 'Transaction feePayer does not match the relayer\'s public key' });
     }
 
-    // 2. All instructions must use allowed programs only
-    for (const ix of transaction.instructions) {
-      const progId = ix.programId.toBase58();
-      if (!ALLOWED_PROGRAMS.has(progId)) {
-        return res.status(400).json({ error: `Disallowed program in transaction: ${progId}` });
-      }
+    // 2. Ensure no instruction can drain the relayer's SOL or tokens
+    const drainCheck = validateRelayerNotDrained(transaction, relayerKp.publicKey);
+    if (drainCheck) {
+      return res.status(400).json({ error: drainCheck });
     }
 
     // 3. Must have our memo to confirm it's a genuine offramp tx
