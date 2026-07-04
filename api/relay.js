@@ -20,7 +20,7 @@ import {
 // ── Allowed Solana programs ─────────────────────────────────────────────────
 const ALLOWED_PROGRAMS = new Set([
   'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', // SPL Token
-  'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJe1bV', // Associated Token Program
+  'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL', // Associated Token Program
   'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb', // Token-2022
   'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr', // Memo Program v1
   'Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo',  // Memo Program v2
