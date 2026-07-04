@@ -1665,6 +1665,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
         onOrderUpdate: (data) => {
           const newStatus = (data?.status || '').toUpperCase();
           if (newStatus === 'COMPLETED' || newStatus === 'SUCCESSFUL' || newStatus === 'CONFIRMED') {
+            // ✅ Write final status to Supabase immediately
+            updateP2PTransactionStatus(order.id, newStatus, data?.txHash || data?.signature || null);
             // Update modal to show TRANSFER CONFIRMED
             setSuccessDetails(prev => prev ? { ...prev, status: newStatus } : prev);
             loadPayoutLogs();
@@ -1673,6 +1675,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
               offrampSocketRef.current = null;
             }
           } else if (newStatus === 'FAILED') {
+            // ✅ Write FAILED status to Supabase immediately
+            updateP2PTransactionStatus(order.id, 'FAILED', null);
             setSuccessDetails(prev => prev ? { ...prev, status: 'FAILED' } : prev);
             loadPayoutLogs();
             if (offrampSocketRef.current) {
@@ -1680,6 +1684,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
               offrampSocketRef.current = null;
             }
           } else if (newStatus === 'PAID') {
+            // ✅ Write PAID status to Supabase immediately
+            updateP2PTransactionStatus(order.id, 'PAID', null);
             setSuccessDetails(prev => prev ? { ...prev, status: 'PAID' } : prev);
             loadPayoutLogs();
           }

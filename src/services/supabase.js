@@ -130,7 +130,8 @@ export async function syncP2PTransactionStatuses(orders = []) {
   const updates = orders
     .map((order) => {
       const orderId = order.id || order._id || order.orderId;
-      const status = order.status || order.state;
+      const rawStatus = order.status || order.state;
+      const status = rawStatus ? String(rawStatus).toUpperCase() : null;
       const signature = order.signature || order.txSignature || order.tx_hash;
       if (!orderId || !status) return null;
       return { order_id: String(orderId), status, signature: signature || null };
