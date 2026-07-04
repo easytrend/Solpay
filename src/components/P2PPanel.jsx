@@ -1266,7 +1266,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
       const order = await createOnrampOrder(
         {
           currency: 'NGN',
-          amount: grossOnrampCrypto,
+          fiatAmount: parsedOnrampAmt,
           recipient: publicKey.toBase58(),
           chain: 'SOLANA',
           fee: onrampFee,
@@ -1465,7 +1465,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
           bank: bankId,
           accountNumber: accountNumber.trim(),
           currency: selectedCountry.currency,
-          amount: baseCryptoAmount,
+          fiatAmount: parsedAmt,
           mint: liveSelectedToken.mint,
           chain: 'SOLANA',
           fee: platformFee,
