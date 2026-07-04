@@ -1300,12 +1300,12 @@ export default function P2PPanel({ connected, walletTokenList }) {
       const observer = observeOrder({
         orderId: order.id,
         onOrderUpdate: async (data) => {
-          const status = (data?.status || '').toLowerCase();
-          setOnrampStatus(status);
-          // Sync status back to Supabase
+          const status = (data?.status || '').toUpperCase();
+          setOnrampStatus(status.toLowerCase());
+          // ✅ Sync status back to Supabase (always uppercase for consistency)
           updateP2PTransactionStatus(order.id, status, data?.txHash || data?.signature);
 
-          const orderSuccess = status === 'completed' || status === 'successful' || status === 'confirmed';
+          const orderSuccess = status === 'COMPLETED' || status === 'SUCCESSFUL' || status === 'CONFIRMED';
           if (orderSuccess && liveSelectedToken.symbol !== 'USDC' && liveSelectedToken.symbol !== 'USDT') {
              // Delay 2s to allow on-chain USDC to settle, then run auto-swap
              setTimeout(async () => {
@@ -1397,14 +1397,15 @@ export default function P2PPanel({ connected, walletTokenList }) {
         const data = res?.data || res;
         
         if (data && isMounted) {
-          const status = (data.status || '').toLowerCase();
-          const currentStatus = (onrampStatus || '').toLowerCase();
+          const status = (data.status || '').toUpperCase();
+          const currentStatus = (onrampStatus || '').toUpperCase();
           
           if (status && status !== currentStatus) {
-            setOnrampStatus(status);
+            setOnrampStatus(status.toLowerCase());
+            // ✅ Sync status back to Supabase (always uppercase for consistency)
             updateP2PTransactionStatus(onrampOrder.id, status, data.txHash || data.signature);
             
-            const orderSuccess = status === 'completed' || status === 'successful' || status === 'confirmed';
+            const orderSuccess = status === 'COMPLETED' || status === 'SUCCESSFUL' || status === 'CONFIRMED';
             if (orderSuccess && liveSelectedToken.symbol !== 'USDC' && liveSelectedToken.symbol !== 'USDT') {
                setTimeout(async () => {
                  try {
