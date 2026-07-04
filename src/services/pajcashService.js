@@ -24,6 +24,26 @@ import {
 
 export { observeOrder };
 
+/**
+ * Returns a persistent, unique device UUID for this browser/device.
+ * Generated once and stored in localStorage so the same browser always
+ * sends the same ID to PajCash, but different devices get different IDs.
+ * This prevents PajCash from hitting its per-device session limit when
+ * multiple devices share the same wallet.
+ */
+function getDeviceUUID() {
+  const STORAGE_KEY = 'fiatwallet_device_uuid';
+  let uuid = localStorage.getItem(STORAGE_KEY);
+  if (!uuid) {
+    // crypto.randomUUID() is available in all modern browsers
+    uuid = typeof crypto?.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : 'fw-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+    localStorage.setItem(STORAGE_KEY, uuid);
+  }
+  return uuid;
+}
+
 // Base URL resolved from env var; defaults to production
 let BASE_URL = 'https://api.paj.cash';
 
@@ -67,29 +87,11 @@ export async function initiateSession(emailOrPhone, apiKey) {
  */
 export async function verifySession(emailOrPhone, otp, apiKey) {
   try {
-    // Generate a deterministic valid UUID format from the email
-    // This prevents hitting the 'maximum 2 devices' limit on PajCash
-    // by making all logins for this email look like the same virtual device.
-    let hashStr = '00000000000000000000000000000000';
-    if (crypto && crypto.subtle && TextEncoder) {
-      const msgUint8 = new TextEncoder().encode(emailOrPhone.toLowerCase().trim());
-      const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      hashStr = hashArray.map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 32);
-    } else {
-      // Fallback simple hash if Web Crypto API is unavailable
-      let h = 0;
-      for (let i = 0; i < emailOrPhone.length; i++) h = Math.imul(31, h) + emailOrPhone.charCodeAt(i) | 0;
-      hashStr = Math.abs(h).toString(16).padStart(32, '0');
-    }
-
-    const deterministicUuid = `${hashStr.substring(0,8)}-${hashStr.substring(8,12)}-4${hashStr.substring(13,16)}-8${hashStr.substring(17,20)}-${hashStr.substring(20,32)}`;
-
     const device = {
-      uuid: deterministicUuid,
-      device: 'Browser',
-      os: 'Web',
-      browser: 'WebBrowser'
+      uuid: getDeviceUUID(),
+      device: navigator.userAgent?.includes('Mobile') ? 'Mobile' : 'Desktop',
+      os: navigator.platform || 'Web',
+      browser: navigator.userAgent?.split(' ').pop() || 'WebBrowser'
     };
     return await sdkVerify(emailOrPhone, otp, device, apiKey);
   } catch (error) {
