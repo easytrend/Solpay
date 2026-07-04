@@ -1059,7 +1059,7 @@ export default function App() {
             <img src={fiatpayLogo} alt="FiatPay" style={{ width: '64px', height: '64px', objectFit: 'contain', marginBottom: '16px' }} />
             <h2 className="card-title" style={{ fontSize: '1.25rem', fontWeight: 'bold', color: 'white', marginBottom: '6px' }}>FiatPay</h2>
             <p className="card-sub" style={{ fontSize: '11px', color: 'var(--text3)', maxWidth: '280px', lineHeight: '1.6', margin: 0 }}>
-              FiatPay payment gateway and billing widget is coming soon.
+              FiatPay is your On-chain <b style={{ color: 'var(--lime)' }}>PayPal</b> coming soon.
             </p>
           </div>
         </div>
