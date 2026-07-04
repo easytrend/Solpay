@@ -1672,7 +1672,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
           const newStatus = (data?.status || '').toUpperCase();
           if (newStatus === 'COMPLETED' || newStatus === 'SUCCESSFUL' || newStatus === 'CONFIRMED') {
             // ✅ Write final status to Supabase immediately
-            updateP2PTransactionStatus(order.id, newStatus, data?.txHash || data?.signature || null);
+            updateP2PTransactionStatus(order.id, newStatus, null);
             // Update modal to show TRANSFER CONFIRMED
             setSuccessDetails(prev => prev ? { ...prev, status: newStatus } : prev);
             loadPayoutLogs();

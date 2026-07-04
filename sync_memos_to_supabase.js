@@ -252,20 +252,36 @@ async function main() {
 
             if (type === 'p2p_offramp') {
               const orderId = memoText.split(':')[3] || 'unknown';
-              await supabase.from('p2p_transactions').upsert({
-                signature: c.signature,
-                user_address: wallet,
-                order_id: orderId,
-                transaction_type: 'p2p_offramp',
-                token_symbol: symbol,
-                crypto_amount: amount,
-                fiat_currency: 'NGN',
-                fiat_amount: 0,
-                usd_value: parseFloat(usdValue.toFixed(2)),
-                status: 'COMPLETED',
-                created_at: fullTimestamp,
-                updated_at: fullTimestamp,
-              }, { onConflict: 'signature' });
+              const { data: existingRow } = await supabase
+                .from('p2p_transactions')
+                .select('order_id')
+                .eq('order_id', orderId)
+                .maybeSingle();
+
+              if (existingRow) {
+                await supabase.from('p2p_transactions')
+                  .update({
+                    signature: c.signature,
+                    status: 'COMPLETED',
+                    updated_at: fullTimestamp,
+                  })
+                  .eq('order_id', orderId);
+              } else {
+                await supabase.from('p2p_transactions').insert({
+                  signature: c.signature,
+                  user_address: wallet,
+                  order_id: orderId,
+                  transaction_type: 'p2p_offramp',
+                  token_symbol: symbol,
+                  crypto_amount: amount,
+                  fiat_currency: 'NGN',
+                  fiat_amount: 0,
+                  usd_value: parseFloat(usdValue.toFixed(2)),
+                  status: 'COMPLETED',
+                  created_at: fullTimestamp,
+                  updated_at: fullTimestamp,
+                });
+              }
             }
 
             if (error) {

@@ -50,6 +50,19 @@ CREATE INDEX IF NOT EXISTS idx_p2p_transactions_user_address ON public.p2p_trans
 CREATE INDEX IF NOT EXISTS idx_p2p_transactions_status ON public.p2p_transactions (status);
 CREATE INDEX IF NOT EXISTS idx_p2p_transactions_created_at ON public.p2p_transactions (created_at DESC);
 
+-- 2.1. PajCash sessions table (cross-device session storage)
+CREATE TABLE IF NOT EXISTS public.paj_sessions (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  wallet_address   text UNIQUE NOT NULL,
+  email            text NOT NULL,
+  session_token    text NOT NULL,
+  expires_at       timestamptz NOT NULL,
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  updated_at       timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_paj_sessions_wallet_address ON public.paj_sessions (wallet_address);
+
 -- 3. Auto-update updated_at on row changes
 CREATE OR REPLACE FUNCTION public.set_p2p_updated_at()
 RETURNS trigger AS $$
@@ -91,6 +104,30 @@ CREATE POLICY "Allow anon update p2p_transactions"
 DROP POLICY IF EXISTS "Allow anon select p2p_transactions" ON public.p2p_transactions;
 CREATE POLICY "Allow anon select p2p_transactions"
   ON public.p2p_transactions FOR SELECT TO anon USING (true);
+
+-- 4.1. Row Level Security policies for paj_sessions
+ALTER TABLE public.paj_sessions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow anon insert paj_sessions" ON public.paj_sessions;
+CREATE POLICY "Allow anon insert paj_sessions"
+  ON public.paj_sessions FOR INSERT TO anon WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow anon update paj_sessions" ON public.paj_sessions;
+CREATE POLICY "Allow anon update paj_sessions"
+  ON public.paj_sessions FOR UPDATE TO anon USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow anon delete paj_sessions" ON public.paj_sessions;
+CREATE POLICY "Allow anon delete paj_sessions"
+  ON public.paj_sessions FOR DELETE TO anon USING (true);
+
+DROP POLICY IF EXISTS "Allow anon select paj_sessions" ON public.paj_sessions;
+CREATE POLICY "Allow anon select paj_sessions"
+  ON public.paj_sessions FOR SELECT TO anon USING (true);
+
+DROP TRIGGER IF EXISTS trg_paj_sessions_updated_at ON public.paj_sessions;
+CREATE TRIGGER trg_paj_sessions_updated_at
+  BEFORE UPDATE ON public.paj_sessions
+  FOR EACH ROW EXECUTE FUNCTION public.set_p2p_updated_at();
 
 -- 5. Dashboard view — all live P2P history (newest first)
 CREATE OR REPLACE VIEW public.p2p_transaction_history AS
@@ -149,6 +186,7 @@ ORDER BY created_at DESC;
 -- 7. Grant schema privileges for anon/authenticated/service_role roles to prevent "permission denied" on upsert
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.transactions TO anon, authenticated, service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.p2p_transactions TO anon, authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.paj_sessions TO anon, authenticated, service_role;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO postgres;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO postgres;
