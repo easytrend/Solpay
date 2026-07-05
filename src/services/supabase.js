@@ -242,3 +242,28 @@ export async function deleteSession(walletAddress) {
   }
 }
 
+/**
+ * Get all order IDs and signatures associated with a specific user's wallet address.
+ */
+export async function getP2PTransactionIdsByUser(walletAddress) {
+  if (!supabase || !walletAddress) return { orderIds: new Set(), signatures: new Set() };
+  try {
+    const { data, error } = await supabase
+      .from('p2p_transactions')
+      .select('order_id, signature')
+      .eq('user_address', walletAddress);
+
+    if (error) {
+      console.warn('[Supabase] getP2PTransactionIdsByUser failed:', error.message);
+      return { orderIds: new Set(), signatures: new Set() };
+    }
+
+    const orderIds = new Set(data.map(r => String(r.order_id)));
+    const signatures = new Set(data.map(r => String(r.signature)).filter(s => s && s !== 'null'));
+    return { orderIds, signatures };
+  } catch (err) {
+    console.warn('[Supabase] getP2PTransactionIdsByUser error:', err.message);
+    return { orderIds: new Set(), signatures: new Set() };
+  }
+}
+

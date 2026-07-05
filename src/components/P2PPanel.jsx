@@ -19,7 +19,7 @@ import {
   getTransaction,
 } from '../services/pajcashService';
 import { getQuote, buildSwapTransaction } from '../services/swapService';
-import { logP2PTransaction, syncP2PTransactionStatuses, updateP2PTransactionStatus, saveSession, loadSession, deleteSession } from '../services/supabase';
+import { logP2PTransaction, syncP2PTransactionStatuses, updateP2PTransactionStatus, saveSession, loadSession, deleteSession, getP2PTransactionIdsByUser } from '../services/supabase';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { PublicKey, Transaction, TransactionInstruction, SystemProgram, VersionedTransaction } from '@solana/web3.js';
 import {
