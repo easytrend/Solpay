@@ -682,47 +682,55 @@ export default function P2PPanel({ connected, walletTokenList }) {
   }, [isLiveRoute]);
 
   // ── Load payout history ──────────────────────────────────────────────────
-  const loadPayoutLogs = () => {
+  const loadPayoutLogs = async () => {
     if (!sessionToken || !publicKey) return;
     setLoadingLogs(true);
     setLogError(null);
-    getTransactionHistory(sessionToken)
-      .then(res => {
-        // The API might wrap data: res could be [] directly, or { data: [] }, or { transactions: [] }
-        let txs = res;
-        if (res && !Array.isArray(res)) {
-          txs = res.data || res.transactions || res.items || res.result || [];
-        }
-        if (!Array.isArray(txs)) txs = [];
+    try {
+      const walletKey = publicKey.toBase58();
 
-        // Debug: log raw API data to browser console so we can inspect field names
-        console.group('[PajCash] Transaction History API Response');
-        console.log('Raw response:', res);
-        console.log('Parsed txs array:', txs);
-        if (txs.length > 0) {
-          console.log('First transaction keys:', Object.keys(txs[0]));
-          console.log('First transaction:', txs[0]);
-        }
-        // Log localStorage orders for this wallet
-        const walletKey = publicKey.toBase58();
-        const localOrders = (() => {
-          try { return JSON.parse(localStorage.getItem(`paj_user_orders_${walletKey}`) || '[]'); }
-          catch { return []; }
-        })();
-        console.log('Local orders in storage:', localOrders);
-        console.groupEnd();
+      // 1. Fetch user's orders from Supabase for filtering broadcast issues
+      const { orderIds: userOrderIds, signatures: userSignatures } = await getP2PTransactionIdsByUser(walletKey);
 
-        syncP2PTransactionStatuses(txs);
-        setPayoutLogs(txs);
-      })
-      .catch(e => {
-        console.warn('Could not load payout history:', e);
-        setLogError(e.message || 'Failed to load history.');
-        if (e.message?.toLowerCase().includes('session') || e.message?.toLowerCase().includes('expired') || e.message?.toLowerCase().includes('unauthorized') || e.message?.toLowerCase().includes('invalid token')) {
-          handleLogoutSession();
-        }
-      })
-      .finally(() => setLoadingLogs(false));
+      // Add local order IDs to ensure local fallbacks aren't filtered out
+      const localOrders = (() => {
+        try { return JSON.parse(localStorage.getItem(`paj_user_orders_${walletKey}`) || '[]'); }
+        catch { return []; }
+      })();
+      localOrders.forEach(o => {
+        const id = o.id || o;
+        if (id) userOrderIds.add(String(id));
+        if (o.sig) userSignatures.add(String(o.sig));
+      });
+
+      // 2. Fetch history from PajCash API
+      const res = await getTransactionHistory(sessionToken);
+      let txs = res;
+      if (res && !Array.isArray(res)) {
+        txs = res.data || res.transactions || res.items || res.result || [];
+      }
+      if (!Array.isArray(txs)) txs = [];
+
+      // 3. Filter PajCash history so it doesn't broadcast all users' orders
+      const filteredTxs = txs.filter(tx => {
+        const id = tx.id || tx._id || tx.orderId;
+        if (id && userOrderIds.has(String(id))) return true;
+        const sig = tx.signature || tx.txHash || tx.tx_hash;
+        if (sig && userSignatures.has(String(sig))) return true;
+        return false;
+      });
+
+      syncP2PTransactionStatuses(filteredTxs);
+      setPayoutLogs(filteredTxs);
+    } catch (e) {
+      console.warn('Could not load payout history:', e);
+      setLogError(e.message || 'Failed to load history.');
+      if (e.message?.toLowerCase().includes('session') || e.message?.toLowerCase().includes('expired') || e.message?.toLowerCase().includes('unauthorized') || e.message?.toLowerCase().includes('invalid token')) {
+        handleLogoutSession();
+      }
+    } finally {
+      setLoadingLogs(false);
+    }
   };
 
   useEffect(() => { loadPayoutLogs(); }, [sessionToken, publicKey]);
