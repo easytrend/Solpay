@@ -460,7 +460,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
       }));
   }, [payoutLogs, publicKey]);
 
-  const itemsPerPage = 10;
+  const itemsPerPage = 5;
   const totalPages = Math.ceil(displayLogs.length / itemsPerPage);
   const paginatedLogs = useMemo(() => {
     return displayLogs.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
@@ -1691,7 +1691,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
         account: accountNumber.trim(),
         name: accountName || 'Account Holder'
       });
-      localStorage.setItem(`paj_user_orders_${walletKey}`, JSON.stringify(existing.slice(0, 50)));
+      localStorage.setItem(`paj_user_orders_${walletKey}`, JSON.stringify(existing.slice(0, 100)));
 
       const cryptoLogged = order.amount || estCryptoAmount;
       const fiatLogged = Number(amount);
@@ -2025,7 +2025,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
                     disabled={currentPage === 1}
                     style={{ background: 'none', border: 'none', color: currentPage === 1 ? 'var(--text3)' : 'white', cursor: currentPage === 1 ? 'not-allowed' : 'pointer', fontSize: '12px', padding: '4px 8px' }}
                   >
-                    ‹
+                    Prev
                   </button>
                   {Array.from({ length: totalPages }, (_, i) => i + 1)
                     .filter(p => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 2)
@@ -2059,7 +2059,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
                     disabled={currentPage === totalPages}
                     style={{ background: 'none', border: 'none', color: currentPage === totalPages ? 'var(--text3)' : 'white', cursor: currentPage === totalPages ? 'not-allowed' : 'pointer', fontSize: '12px', padding: '4px 8px' }}
                   >
-                    ›
+                    Next
                   </button>
                 </div>
               )}
