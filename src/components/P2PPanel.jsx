@@ -1829,7 +1829,20 @@ export default function P2PPanel({ connected, walletTokenList }) {
         <h2 className="card-title" style={{ margin: 0, fontSize: '1.25rem' }}>P2P Trade</h2>
         {canTransact && publicKey && (
           <button 
-            style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.25)', cursor: 'default', padding: '4px' }}
+            onClick={() => setShowHistoryView(!showHistoryView)}
+            style={{ 
+              background: showHistoryView ? 'rgba(255,255,255,0.1)' : 'none', 
+              border: 'none', 
+              color: showHistoryView ? 'white' : 'rgba(255,255,255,0.6)', 
+              cursor: 'pointer', 
+              padding: '6px',
+              borderRadius: '50%',
+              transition: 'all 0.2s',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}
+            title="Transaction History"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="10"></circle>
