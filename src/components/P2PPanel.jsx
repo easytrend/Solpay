@@ -1466,6 +1466,52 @@ export default function P2PPanel({ connected, walletTokenList }) {
     };
   }, [onrampOrder, onrampStatus, sessionToken, liveSelectedToken, triggerJupiterSwap]);
 
+  // ── Polling Fallback for Offramp (Sell) Order Status ────────────────────────
+  useEffect(() => {
+    // Only poll if the success modal is active and status is pending or paid
+    if (!showSuccess || !successDetails?.orderId || !sessionToken) return;
+    
+    const currentStatus = (successDetails.status || '').toUpperCase();
+    if (currentStatus === 'COMPLETED' || currentStatus === 'SUCCESSFUL' || currentStatus === 'CONFIRMED' || currentStatus === 'FAILED') {
+      return;
+    }
+
+    let isMounted = true;
+    const interval = setInterval(async () => {
+      try {
+        const res = await getTransaction(sessionToken, successDetails.orderId);
+        const data = res?.data || res;
+        
+        if (data && isMounted) {
+          const status = (data.status || '').toUpperCase();
+          
+          if (status && status !== currentStatus) {
+            if (status === 'COMPLETED' || status === 'SUCCESSFUL' || status === 'CONFIRMED') {
+              updateP2PTransactionStatus(successDetails.orderId, status, null);
+              setSuccessDetails(prev => prev ? { ...prev, status } : prev);
+              loadPayoutLogs();
+            } else if (status === 'FAILED') {
+              updateP2PTransactionStatus(successDetails.orderId, 'FAILED', null);
+              setSuccessDetails(prev => prev ? { ...prev, status: 'FAILED' } : prev);
+              loadPayoutLogs();
+            } else if (status === 'PAID') {
+              updateP2PTransactionStatus(successDetails.orderId, 'PAID', null);
+              setSuccessDetails(prev => prev ? { ...prev, status: 'PAID' } : prev);
+              loadPayoutLogs();
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Offramp polling status fetch failed:', err);
+      }
+    }, 5000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [successDetails, showSuccess, sessionToken]);
+
   // ── Submit handler (Offramp / Sell) ──────────────────────────────────────
   const handleSubmit = async () => {
     setP2pError(null);
