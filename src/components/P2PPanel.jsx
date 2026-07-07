@@ -1176,8 +1176,10 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const parsedOnrampAmtRaw = parseFloat(onrampAmount) || 0;
   const parsedOnrampAmt = onrampInputMode === 'crypto' ? parsedOnrampAmtRaw * onrampNgnRate : parsedOnrampAmtRaw;
   const grossOnrampCrypto = onrampInputMode === 'fiat' ? (onrampNgnRate > 0 ? parsedOnrampAmt / onrampNgnRate : 0) : parsedOnrampAmtRaw;
-  const onrampFee = 0;
-  const estOnrampCrypto = grossOnrampCrypto;
+  // Platform fee is deducted from the USDC the user receives — the NGN they send never changes.
+  // We pass this to PajCash as `fee` so they handle the deduction natively on their end.
+  const onrampFee = PLATFORM_FEE_USD; // $0.10
+  const estOnrampCrypto = Math.max(0, grossOnrampCrypto - onrampFee);
 
   const displayOnrampAmount = useMemo(() => {
     if (parsedOnrampAmt <= 0) return 0;
@@ -1370,8 +1372,13 @@ export default function P2PPanel({ connected, walletTokenList }) {
     const onrampNgnRate = pajRates?.onRampRate?.rate || pajRates?.rate || 1500;
     const parsedOnrampAmtRaw = parseFloat(onrampAmount) || 0;
     const parsedOnrampAmt = onrampInputMode === 'crypto' ? parsedOnrampAmtRaw * onrampNgnRate : parsedOnrampAmtRaw;
-    const usdcAmount = onrampInputMode === 'fiat' ? Math.max(0, parsedOnrampAmt / onrampNgnRate) : parsedOnrampAmtRaw;
-    const amountLamports = Math.floor(usdcAmount * 1_000_000);
+    // We deduct the $0.10 platform fee from the gross USDC before swapping.
+    // PajCash already deducted it on their side, so the wallet only receives (gross - 0.10) USDC.
+    // Using the net amount ensures the swap never fails with "insufficient funds".
+    const grossUsdcAmount = onrampInputMode === 'fiat' ? Math.max(0, parsedOnrampAmt / onrampNgnRate) : parsedOnrampAmtRaw;
+    const SWAP_PLATFORM_FEE_USD = 0.10;
+    const netUsdcAmount = Math.max(0, grossUsdcAmount - SWAP_PLATFORM_FEE_USD);
+    const amountLamports = Math.floor(netUsdcAmount * 1_000_000);
     
     if (amountLamports <= 0) {
       throw new Error("Invalid USDC amount for swap.");
@@ -2901,6 +2908,11 @@ export default function P2PPanel({ connected, walletTokenList }) {
                 <span style={{ color: 'rgba(255,255,255,0.38)' }}>
                   1 {liveSelectedToken.symbol} ≈ {selectedCountry.symbol}{displayOnrampRate.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
+                {onrampAmount && Number(onrampAmount) > 0 && (
+                  <span style={{ display: 'block', marginTop: '3px', color: '#f87171', fontWeight: '600', fontSize: '10.5px', letterSpacing: '0.01em' }}>
+                    −$0.10 platform fee
+                  </span>
+                )}
               </div>
             )}
           </div>
