@@ -1333,7 +1333,10 @@ export default function P2PPanel({ connected, walletTokenList }) {
           fiatAmount: parsedOnrampAmt,
           recipient: publicKey.toBase58(),
           chain: 'SOLANA',
-          fee: onrampFee,
+          // NOTE: Do NOT pass fee here. PajCash's `fee` param adds to the fiat the user
+          // must transfer (making them pay MORE naira than they typed), not deducts from USDC.
+          // Our $0.10 platform fee is deducted from the displayed USDC estimate and from the
+          // auto-swap amount — the NGN amount the user sends is always exactly what they typed.
           mint: onrampMint,
         },
         sessionToken
