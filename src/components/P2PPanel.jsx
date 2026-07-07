@@ -314,7 +314,9 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const [relayerActive, setRelayerActive] = useState(false);
 
   // ── Onramp (Buy) State ───────────────────────────────────────────────────
-  const [onrampAmount, setOnrampAmount] = useState(''); // NGN amount user wants to send
+  const [onrampAmount, setOnrampAmount] = useState(''); // amount user wants to send
+  const [offrampInputMode, setOfframpInputMode] = useState('fiat'); // 'fiat' | 'crypto'
+  const [onrampInputMode, setOnrampInputMode] = useState('fiat'); // 'fiat' | 'crypto'
   const [onrampOrder, setOnrampOrder] = useState(null); // PajCash order response with bank details
   const [onrampLoading, setOnrampLoading] = useState(false);
   const [onrampError, setOnrampError] = useState(null);
@@ -612,12 +614,13 @@ export default function P2PPanel({ connected, walletTokenList }) {
   // ── Dynamic Quote for non-native tokens ──────────────────────────────────
   useEffect(() => {
     const onrampNgnRate = pajRates?.onRampRate?.rate || pajRates?.rate || 1500;
-    const parsedOnrampAmt = parseFloat(onrampAmount) || 0;
+    const parsedOnrampAmtRaw = parseFloat(onrampAmount) || 0;
+    const parsedOnrampAmt = onrampInputMode === 'crypto' ? parsedOnrampAmtRaw * onrampNgnRate : parsedOnrampAmtRaw;
     
     if (mode === 'buy' && parsedOnrampAmt > 0 && selectedToken && selectedToken.symbol !== 'USDC' && selectedToken.symbol !== 'USDT') {
       const fetchJupiterQuote = async () => {
         try {
-          const usdcAmount = Math.max(0, parsedOnrampAmt / onrampNgnRate);
+          const usdcAmount = onrampInputMode === 'fiat' ? Math.max(0, parsedOnrampAmt / onrampNgnRate) : parsedOnrampAmtRaw;
           const amountLamports = Math.floor(usdcAmount * 1_000_000); // USDC has 6 decimals
           
           if (amountLamports <= 0) {
@@ -1156,8 +1159,9 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const activeNgnRate = pajRates?.offRampRate?.rate || pajRates?.rate || 1550;
   const onrampNgnRate = pajRates?.onRampRate?.rate || pajRates?.rate || 1500;
   const ngnRate = tokenPriceUsd * activeNgnRate;
-  const parsedAmt = parseFloat(amount) || 0;
-  const estCryptoAmount = ngnRate > 0 ? (parsedAmt / ngnRate) : 0;
+  const parsedAmtRaw = parseFloat(amount) || 0;
+  const parsedAmt = offrampInputMode === 'crypto' ? parsedAmtRaw * ngnRate : parsedAmtRaw;
+  const estCryptoAmount = offrampInputMode === 'fiat' ? (ngnRate > 0 ? parsedAmt / ngnRate : 0) : parsedAmtRaw;
 
   // ── Platform Fee: $0.10 in CRYPTO on every On/Offramp ──────────────────────
   // Fee is collected in the user's chosen crypto — never from the NGN payout.
@@ -1169,8 +1173,9 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const baseCryptoAmount = estCryptoAmount + platformFeeInToken; // user sends trade + fee in their token
   const fiatAmountText = parsedAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  const parsedOnrampAmt = parseFloat(onrampAmount) || 0;
-  const grossOnrampCrypto = onrampNgnRate > 0 ? (parsedOnrampAmt / onrampNgnRate) : 0;
+  const parsedOnrampAmtRaw = parseFloat(onrampAmount) || 0;
+  const parsedOnrampAmt = onrampInputMode === 'crypto' ? parsedOnrampAmtRaw * onrampNgnRate : parsedOnrampAmtRaw;
+  const grossOnrampCrypto = onrampInputMode === 'fiat' ? (onrampNgnRate > 0 ? parsedOnrampAmt / onrampNgnRate : 0) : parsedOnrampAmtRaw;
   const onrampFee = 0;
   const estOnrampCrypto = grossOnrampCrypto;
 
@@ -1363,8 +1368,9 @@ export default function P2PPanel({ connected, walletTokenList }) {
     }
     
     const onrampNgnRate = pajRates?.onRampRate?.rate || pajRates?.rate || 1500;
-    const parsedOnrampAmt = parseFloat(onrampAmount) || 0;
-    const usdcAmount = Math.max(0, parsedOnrampAmt / onrampNgnRate);
+    const parsedOnrampAmtRaw = parseFloat(onrampAmount) || 0;
+    const parsedOnrampAmt = onrampInputMode === 'crypto' ? parsedOnrampAmtRaw * onrampNgnRate : parsedOnrampAmtRaw;
+    const usdcAmount = onrampInputMode === 'fiat' ? Math.max(0, parsedOnrampAmt / onrampNgnRate) : parsedOnrampAmtRaw;
     const amountLamports = Math.floor(usdcAmount * 1_000_000);
     
     if (amountLamports <= 0) {
@@ -2439,16 +2445,18 @@ export default function P2PPanel({ connected, walletTokenList }) {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                   {/* Left Part: Input & symbol */}
                   <div style={{ display: 'flex', flex: 1, flexDirection: 'row', alignItems: 'center', gap: '6px' }}>
-                    <span style={{
-                      color: amount ? 'white' : 'rgba(255, 255, 255, 0.38)',
-                      fontWeight: '500',
-                      fontSize: '32px',
-                      fontFamily: 'var(--ff)',
-                      lineHeight: 1,
-                      userSelect: 'none'
-                    }}>
-                      {selectedCountry.symbol}
-                    </span>
+                    {offrampInputMode === 'fiat' && (
+                      <span style={{
+                        color: amount ? 'white' : 'rgba(255, 255, 255, 0.38)',
+                        fontWeight: '500',
+                        fontSize: '32px',
+                        fontFamily: 'var(--ff)',
+                        lineHeight: 1,
+                        userSelect: 'none'
+                      }}>
+                        {selectedCountry.symbol}
+                      </span>
+                    )}
                     <input
                       className="amount-num"
                       type="number"
@@ -2562,18 +2570,27 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
                 {/* ── Estimated display with 1% fee note ── */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  {/* Estimated crypto quantity */}
-                  <span className="amount-converted" style={{ fontSize: '12px', color: 'rgba(255,255,255,0.38)', fontFamily: 'var(--ff)' }}>
-                    {routingState === 'routing' || routingState === 'loading_market' ? (
-                      <span style={{ color: 'rgba(255,255,255,0.38)', fontStyle: 'italic' }}>
-                        <span className="p2p-mini-spinner" /> Routing...
-                      </span>
-                    ) : (
-                      amount && Number(amount) > 0
-                        ? `≈ ${estCryptoAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} ${liveSelectedToken.symbol}`
-                        : `≈ ${liveSelectedToken.symbol}`
-                    )}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span className="amount-converted" style={{ fontSize: '12px', color: 'rgba(255,255,255,0.38)', fontFamily: 'var(--ff)' }}>
+                      {routingState === 'routing' || routingState === 'loading_market' ? (
+                        <span style={{ color: 'rgba(255,255,255,0.38)', fontStyle: 'italic' }}>
+                          <span className="p2p-mini-spinner" /> Routing...
+                        </span>
+                      ) : (
+                        amount && Number(amount) > 0
+                          ? (offrampInputMode === 'crypto' 
+                               ? `≈ ${selectedCountry.symbol}${parsedAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` 
+                               : `≈ ${estCryptoAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} ${liveSelectedToken.symbol}`)
+                          : (offrampInputMode === 'crypto' 
+                               ? `≈ ${selectedCountry.symbol}0.00` 
+                               : `≈ ${liveSelectedToken.symbol}`)
+                      )}
+                    </span>
+                    <div className="input-mode-toggle">
+                      <button type="button" className={`imt-btn ${offrampInputMode === 'fiat' ? 'active' : ''}`} onClick={() => setOfframpInputMode('fiat')}>{selectedCountry.code}</button>
+                      <button type="button" className={`imt-btn ${offrampInputMode === 'crypto' ? 'active' : ''}`} onClick={() => setOfframpInputMode('crypto')}>{liveSelectedToken.symbol}</button>
+                    </div>
+                  </div>
 
                   {/* Token balance with small MAX button before the quantity */}
                   {liveSelectedToken.balance != null && (
@@ -2703,9 +2720,11 @@ export default function P2PPanel({ connected, walletTokenList }) {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                 {/* Left Part: NGN Input */}
                 <div style={{ display: 'flex', flex: 1, flexDirection: 'row', alignItems: 'center', gap: '6px' }}>
-                  <span style={{ color: onrampAmount ? 'white' : 'rgba(255, 255, 255, 0.38)', fontWeight: '500', fontSize: '32px', fontFamily: 'var(--ff)', lineHeight: 1, userSelect: 'none' }}>
-                    ₦
-                  </span>
+                  {onrampInputMode === 'fiat' && (
+                    <span style={{ color: onrampAmount ? 'white' : 'rgba(255, 255, 255, 0.38)', fontWeight: '500', fontSize: '32px', fontFamily: 'var(--ff)', lineHeight: 1, userSelect: 'none' }}>
+                      {selectedCountry.symbol}
+                    </span>
+                  )}
                   <input
                     type="text"
                     inputMode="decimal"
@@ -2854,12 +2873,22 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
               {/* Bottom Row of block: Estimation preview */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '10px', marginTop: '8px' }}>
-                <span className="amount-converted" style={{ fontSize: '12px', color: 'rgba(255,255,255,0.38)', fontFamily: 'var(--ff)' }}>
-                  {parsedOnrampAmt > 0
-                    ? `≈ ${displayOnrampAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} ${liveSelectedToken.symbol}`
-                    : `≈ ${liveSelectedToken.symbol}`
-                  }
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span className="amount-converted" style={{ fontSize: '12px', color: 'rgba(255,255,255,0.38)', fontFamily: 'var(--ff)' }}>
+                    {parsedOnrampAmt > 0
+                      ? (onrampInputMode === 'crypto'
+                           ? `≈ ${selectedCountry.symbol}${parsedOnrampAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                           : `≈ ${displayOnrampAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} ${liveSelectedToken.symbol}`)
+                      : (onrampInputMode === 'crypto'
+                           ? `≈ ${selectedCountry.symbol}0.00`
+                           : `≈ ${liveSelectedToken.symbol}`)
+                    }
+                  </span>
+                  <div className="input-mode-toggle">
+                    <button type="button" className={`imt-btn ${onrampInputMode === 'fiat' ? 'active' : ''}`} onClick={() => setOnrampInputMode('fiat')}>{selectedCountry.code}</button>
+                    <button type="button" className={`imt-btn ${onrampInputMode === 'crypto' ? 'active' : ''}`} onClick={() => setOnrampInputMode('crypto')}>{liveSelectedToken.symbol}</button>
+                  </div>
+                </div>
               </div>
             </div>
 
