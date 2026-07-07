@@ -106,6 +106,17 @@ export async function logP2PTransaction({
 export async function updateP2PTransactionStatus(orderId, status, signature = null) {
   if (!supabase || !orderId) return;
   try {
+    // Guard against overwriting terminal forwarded status
+    const { data: current } = await supabase
+      .from('p2p_transactions')
+      .select('status')
+      .eq('order_id', String(orderId))
+      .maybeSingle();
+      
+    if (current?.status === 'FORWARDED_SUCCESS') {
+      return; // Do not overwrite relayer forward status
+    }
+
     const patch = { status: status.toUpperCase(), updated_at: new Date().toISOString() };
     if (signature) {
       patch.signature = signature;

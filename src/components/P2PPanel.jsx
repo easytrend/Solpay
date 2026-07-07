@@ -1322,6 +1322,18 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
     setOnrampLoading(true);
     try {
+      // Check if relayer is configured
+      const relayerPubkeyStr = import.meta.env.VITE_RELAYER_PUBLIC_KEY;
+      let recipientAddress = publicKey.toBase58();
+      if (relayerPubkeyStr) {
+        try {
+          new PublicKey(relayerPubkeyStr);
+          recipientAddress = relayerPubkeyStr;
+        } catch (e) {
+          console.warn('VITE_RELAYER_PUBLIC_KEY is invalid:', e.message);
+        }
+      }
+
       // If user is buying a custom token, we must onramp USDC via PajCash, then swap it to the target token.
       const onrampMint = (liveSelectedToken.symbol === 'USDC' || liveSelectedToken.symbol === 'USDT')
         ? liveSelectedToken.mint
@@ -1331,7 +1343,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
         {
           currency: 'NGN',
           fiatAmount: parsedOnrampAmt,
-          recipient: publicKey.toBase58(),
+          recipient: recipientAddress,
           chain: 'SOLANA',
           // NOTE: Do NOT pass fee here. PajCash's `fee` param adds to the fiat the user
           // must transfer (making them pay MORE naira than they typed), not deducts from USDC.
@@ -1375,30 +1387,16 @@ export default function P2PPanel({ connected, walletTokenList }) {
         orderId: order.id,
         onOrderUpdate: async (data) => {
           const status = (data?.status || '').toUpperCase();
-          setOnrampStatus(status.toLowerCase());
-          // ✅ Sync status back to Supabase (always uppercase for consistency)
-          updateP2PTransactionStatus(order.id, status, data?.txHash || data?.signature);
+          
+          // Only update database status if it is not already in a terminal state
+          if (onrampStatus !== 'completed' && onrampStatus !== 'forwarded_success' && onrampStatus !== 'failed') {
+            setOnrampStatus(status.toLowerCase());
+            updateP2PTransactionStatus(order.id, status, data?.txHash || data?.signature);
+          }
 
           const orderSuccess = status === 'COMPLETED' || status === 'SUCCESSFUL' || status === 'CONFIRMED';
-          if (orderSuccess && liveSelectedToken.symbol !== 'USDC' && liveSelectedToken.symbol !== 'USDT') {
-             // Guard: only trigger auto-swap once, even if both WebSocket and polling fire
-             if (swapTriggeredRef.current) return;
-             swapTriggeredRef.current = true;
-             // Delay 3s to allow on-chain USDC to settle, then run auto-swap
-             setTimeout(async () => {
-               try {
-                 await triggerJupiterSwap();
-               } catch (swapErr) {
-                 console.error("Auto-swap trigger failed:", swapErr);
-                 // Only show error if swap genuinely failed (not a post-confirm adapter glitch)
-                 const msg = swapErr.message || String(swapErr);
-                 const isWalletAdapterGlitch = msg.includes('WalletSignTransactionError') || msg.includes('user rejected') || msg.includes('Transaction was not confirmed');
-                 if (!isWalletAdapterGlitch) {
-                   setOnrampError(`Payment received. Auto-swap to ${liveSelectedToken.symbol} failed — your USDC is safe. Tap "Swap" tab to swap manually.`);
-                 }
-                 setOnrampStatus('completed');
-               }
-             }, 3000);
+          if (orderSuccess) {
+             handleOrderCompleted(order.id);
           }
         },
         onError: (err) => {
@@ -1516,6 +1514,58 @@ export default function P2PPanel({ connected, walletTokenList }) {
     }
   }, [publicKey, signTransaction, pajRates, onrampAmount, onrampInputMode, liveSelectedToken, connection, pajcashNetUsdc]);
 
+  // Helper to run forwarding (and optional auto-swap) when onramp is paid.
+  // We guard this function with `swapTriggeredRef` so it only runs once total.
+  const handleOrderCompleted = useCallback(async (orderId) => {
+    if (swapTriggeredRef.current) return;
+    swapTriggeredRef.current = true;
+
+    // Check if we are using the relayer intermediary for onramp fee deduction
+    const relayerPubkeyStr = import.meta.env.VITE_RELAYER_PUBLIC_KEY;
+    const isRelayerActive = !!relayerPubkeyStr;
+
+    try {
+      if (isRelayerActive) {
+        setOnrampStatus('forwarding');
+        // Call backend API to deduct the fee and forward USDC to user
+        const res = await fetch('/api/relay_onramp_fee', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ orderId, sessionToken })
+        });
+        const result = await res.json();
+        if (!res.ok) {
+          throw new Error(result.error || 'Failed to forward funds from relayer.');
+        }
+        
+        // Wait 3 seconds for the forwarding transaction to land on-chain
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+      }
+
+      // If the user is buying a custom token, trigger the auto-swap
+      if (liveSelectedToken.symbol !== 'USDC' && liveSelectedToken.symbol !== 'USDT') {
+        setOnrampStatus('swapping');
+        await triggerJupiterSwap();
+      } else {
+        setOnrampStatus('completed');
+      }
+    } catch (err) {
+      console.error('handleOrderCompleted failed:', err);
+      const msg = err.message || String(err);
+      const isWalletAdapterGlitch = msg.includes('WalletSignTransactionError') || msg.includes('user rejected') || msg.includes('Transaction was not confirmed');
+      
+      if (isRelayerActive && onrampStatus === 'forwarding') {
+        setOnrampError(`Payment received. Failed to transfer USDC to your wallet: ${msg}. Contact support with Order ID.`);
+        setOnrampStatus('failed');
+      } else if (!isWalletAdapterGlitch) {
+        setOnrampError(`Payment received. Auto-swap to ${liveSelectedToken.symbol} failed — your USDC is safe. Tap "Swap" tab to swap manually.`);
+        setOnrampStatus('completed');
+      } else {
+        setOnrampStatus('completed');
+      }
+    }
+  }, [sessionToken, liveSelectedToken, triggerJupiterSwap, onrampStatus]);
+
   // ── Polling Fallback for Onramp Order Status ──────────────────────────────
   useEffect(() => {
     if (!onrampOrder?.id || !sessionToken || onrampStatus === 'completed' || onrampStatus === 'failed') {
@@ -1538,23 +1588,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
             updateP2PTransactionStatus(onrampOrder.id, status, data.txHash || data.signature);
             
             const orderSuccess = status === 'COMPLETED' || status === 'SUCCESSFUL' || status === 'CONFIRMED';
-            if (orderSuccess && liveSelectedToken.symbol !== 'USDC' && liveSelectedToken.symbol !== 'USDT') {
-               // Guard: only trigger auto-swap once, even if both WebSocket and polling fire
-               if (swapTriggeredRef.current) return;
-               swapTriggeredRef.current = true;
-               setTimeout(async () => {
-                 try {
-                   await triggerJupiterSwap();
-                 } catch (swapErr) {
-                   console.error("Auto-swap trigger failed:", swapErr);
-                   const msg = swapErr.message || String(swapErr);
-                   const isWalletAdapterGlitch = msg.includes('WalletSignTransactionError') || msg.includes('user rejected') || msg.includes('Transaction was not confirmed');
-                   if (!isWalletAdapterGlitch) {
-                     setOnrampError(`Payment received. Auto-swap to ${liveSelectedToken.symbol} failed — your USDC is safe. Tap "Swap" tab to swap manually.`);
-                   }
-                   setOnrampStatus('completed');
-                 }
-               }, 3000);
+            if (orderSuccess) {
+               handleOrderCompleted(onrampOrder.id);
             }
           }
         }
@@ -3035,10 +3070,10 @@ export default function P2PPanel({ connected, walletTokenList }) {
                 <span style={{ fontSize: '11px', color: 'var(--text3)' }}>Status</span>
                 <span style={{
                   fontSize: '11px', fontWeight: '700',
-                  color: onrampStatus === 'completed' ? 'var(--lime)' : onrampStatus === 'failed' ? '#ef4444' : onrampStatus === 'swapping' ? '#3b82f6' : '#eab308',
+                  color: onrampStatus === 'completed' ? 'var(--lime)' : onrampStatus === 'failed' ? '#ef4444' : (onrampStatus === 'swapping' || onrampStatus === 'forwarding') ? '#3b82f6' : '#eab308',
                   textTransform: 'uppercase',
                 }}>
-                  {onrampStatus === 'completed' ? '✓ Completed' : onrampStatus === 'failed' ? '✕ Failed' : onrampStatus === 'swapping' ? '🔄 Swapping...' : '⏳ Awaiting Payment'}
+                  {onrampStatus === 'completed' ? '✓ Completed' : onrampStatus === 'failed' ? '✕ Failed' : onrampStatus === 'forwarding' ? '🔄 Forwarding...' : onrampStatus === 'swapping' ? '🔄 Swapping...' : '⏳ Awaiting Payment'}
                 </span>
               </div>
             </div>
@@ -3146,17 +3181,19 @@ export default function P2PPanel({ connected, walletTokenList }) {
                       className="send-btn"
                       disabled={true}
                       style={{
-                        background: onrampStatus === 'swapping' ? 'rgba(59, 130, 246, 0.08)' : 'rgba(16, 185, 129, 0.08)',
-                        border: onrampStatus === 'swapping' ? '1px solid rgba(59, 130, 246, 0.25)' : '1px solid rgba(16, 185, 129, 0.25)',
-                        color: onrampStatus === 'swapping' ? '#60a5fa' : 'var(--lime)',
+                        background: (onrampStatus === 'swapping' || onrampStatus === 'forwarding') ? 'rgba(59, 130, 246, 0.08)' : 'rgba(16, 185, 129, 0.08)',
+                        border: (onrampStatus === 'swapping' || onrampStatus === 'forwarding') ? '1px solid rgba(59, 130, 246, 0.25)' : '1px solid rgba(16, 185, 129, 0.25)',
+                        color: (onrampStatus === 'swapping' || onrampStatus === 'forwarding') ? '#60a5fa' : 'var(--lime)',
                         fontSize: '13px',
                         cursor: 'not-allowed',
                         opacity: 0.8
                       }}
                     >
-                      {onrampStatus === 'swapping' 
-                        ? `🔄 Swapping USDC to ${liveSelectedToken.symbol}...` 
-                        : '⏳ Confirming Payment...'}
+                      {onrampStatus === 'forwarding'
+                        ? '🔄 Forwarding USDC...'
+                        : onrampStatus === 'swapping'
+                          ? `🔄 Swapping USDC to ${liveSelectedToken.symbol}...`
+                          : '⏳ Confirming Payment...'}
                     </button>
                   )}
 
