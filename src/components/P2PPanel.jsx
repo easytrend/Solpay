@@ -1387,16 +1387,18 @@ export default function P2PPanel({ connected, walletTokenList }) {
         ? liveSelectedToken.mint
         : 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'; // Default to USDC mint
 
-      // platformFeeUsdc = ₦200 converted to USDC at the live rate.
-      // PajCash will uplift the buyer's payment by the Naira equivalent of this
-      // USDC amount and deposit that USDC into the developer's merchant account.
+      // We pass the FULL amount (base + ₦200 fee) as fiatAmount so PajCash
+      // generates a payment slip for exactly ₦1,200 — no USDC↔NGN rate
+      // conversion means no rounding gap. The fee param tells PajCash how
+      // much USDC to split off to the developer's merchant account from
+      // the received total.
       const order = await createOnrampOrder(
         {
           currency: 'NGN',
-          fiatAmount: parsedOnrampAmt,
+          fiatAmount: parsedOnrampAmt + PLATFORM_FEE_NGN, // ₦1,000 + ₦200 = ₦1,200 exact
           recipient: publicKey.toBase58(),
           chain: 'SOLANA',
-          fee: platformFeeUsdc, // ₦200 → USDC; PajCash adds this to the buyer's NGN bill
+          fee: platformFeeUsdc, // USDC equivalent of ₦200 → routed to merchant account
           mint: onrampMint,
         },
         sessionToken
