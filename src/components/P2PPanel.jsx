@@ -3055,61 +3055,145 @@ export default function P2PPanel({ connected, walletTokenList }) {
             </div>
           )}
 
-          {/* Bank Details Card (after order created) */}
+          {/* ── Bank Details Overlay Card ─────────────────────────────────── */}
           {onrampOrder && (
-            <div style={{
-              background: 'linear-gradient(135deg, rgba(16,185,129,0.08) 0%, rgba(6,78,59,0.12) 100%)',
-              border: '1px solid rgba(16,185,129,0.25)', borderRadius: '14px', padding: '16px',
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Transfer Fiat To</div>
+            <div
+              className="p2p-success-overlay"
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.88)', backdropFilter: 'blur(8px)', zIndex: 1000, position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }}
+            >
+              <div style={{
+                background: 'var(--card)',
+                border: '1px solid var(--border)',
+                borderRadius: '22px',
+                width: '92%',
+                maxWidth: '390px',
+                padding: '28px 24px 24px 24px',
+                position: 'relative',
+                boxShadow: '0 25px 60px -10px rgba(0,0,0,0.6)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '0px',
+              }}>
+
+                {/* Close button — always visible so user can dismiss */}
                 <button
                   onClick={() => {
-                    setOnrampOrder(null);
-                    setOnrampStatus(null);
-                    setOnrampAmount('');
                     if (onrampSocketRef.current) {
                       try { onrampSocketRef.current.disconnect(); } catch {}
                       onrampSocketRef.current = null;
                     }
+                    setOnrampOrder(null);
+                    setOnrampStatus(null);
+                    setOnrampAmount('');
                   }}
-                  style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.5)', cursor: 'pointer', fontSize: '16px', padding: 0 }}
-                  title="Cancel Order"
-                >
-                  ✕
-                </button>
-              </div>
-              {[['Bank', onrampOrder.bankName || onrampOrder.bank || '—'],
-                ['Account No.', onrampOrder.accountNumber || onrampOrder.account || '—'],
-                ['Account Name', onrampOrder.accountName || onrampOrder.name || '—'],
-                ['Amount (NGN)', `₦${parsedOnrampAmt.toLocaleString()}`],
-                ['Reference', onrampOrder.reference || onrampOrder.id],
-              ].map(([label, val]) => (
-                <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                  <span style={{ fontSize: '11px', color: 'var(--text3)' }}>{label}</span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span style={{ fontSize: '12px', color: 'white', fontWeight: '600', fontFamily: 'monospace' }}>{val}</span>
-                    {(label === 'Account No.' || label === 'Reference') && (
-                      <button
-                        onClick={() => { navigator.clipboard?.writeText(String(val)); setCopiedOnrampAcct(label); setTimeout(() => setCopiedOnrampAcct(false), 1500); }}
-                        style={{ background: 'none', border: 'none', color: copiedOnrampAcct === label ? 'var(--lime)' : 'var(--text3)', cursor: 'pointer', fontSize: '10px', padding: '2px' }}
-                      >
-                        {copiedOnrampAcct === label ? '✓' : '📋'}
-                      </button>
-                    )}
+                  style={{ position: 'absolute', top: '16px', right: '18px', background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '50%', width: '30px', height: '30px', color: 'rgba(255,255,255,0.6)', cursor: 'pointer', fontSize: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}
+                  title="Close"
+                >✕</button>
+
+                {/* Bank icon circle */}
+                <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: 'rgba(234,179,8,0.1)', border: '2px solid rgba(234,179,8,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 18px auto', fontSize: '24px' }}>
+                  🏦
+                </div>
+
+                {/* Header */}
+                <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+                  <div style={{ fontSize: '11px', color: '#8e9aa8', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600, marginBottom: '6px' }}>
+                    Transfer Exactly
+                  </div>
+                  <div style={{ fontSize: '38px', fontWeight: '800', color: '#fcefdc', letterSpacing: '-0.02em', marginBottom: '4px', fontFamily: 'sans-serif' }}>
+                    ₦{(parsedOnrampAmt + PLATFORM_FEE_NGN).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#8e9aa8' }}>
+                    incl. ₦{PLATFORM_FEE_NGN} service fee
                   </div>
                 </div>
-              ))}
-              {/* Status indicator */}
-              <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '11px', color: 'var(--text3)' }}>Status</span>
-                <span style={{
-                  fontSize: '11px', fontWeight: '700',
-                  color: onrampStatus === 'completed' ? 'var(--lime)' : onrampStatus === 'failed' ? '#ef4444' : (onrampStatus === 'swapping' || onrampStatus === 'forwarding') ? '#3b82f6' : '#eab308',
-                  textTransform: 'uppercase',
-                }}>
-                  {onrampStatus === 'completed' ? '✓ Completed' : onrampStatus === 'failed' ? '✕ Failed' : onrampStatus === 'forwarding' ? '🔄 Forwarding...' : onrampStatus === 'swapping' ? '🔄 Swapping...' : '⏳ Awaiting Payment'}
-                </span>
+
+                {/* Divider */}
+                <div style={{ height: '1px', background: 'rgba(255,255,255,0.08)', margin: '0 0 20px 0' }} />
+
+                {/* Bank details rows */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '20px' }}>
+                  {[
+                    ['Bank', onrampOrder.bankName || onrampOrder.bank || '—'],
+                    ['Account No.', onrampOrder.accountNumber || onrampOrder.account || '—'],
+                    ['Account Name', onrampOrder.accountName || onrampOrder.name || '—'],
+                    ['Reference', onrampOrder.reference || onrampOrder.id || '—'],
+                  ].map(([label, val]) => (
+                    <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13.5px' }}>
+                      <span style={{ color: '#8e9aa8', minWidth: '90px' }}>{label}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ color: 'white', fontWeight: '700', fontFamily: label === 'Account No.' || label === 'Reference' ? 'monospace' : 'inherit', textAlign: 'right', maxWidth: '210px', wordBreak: 'break-all' }}>{val}</span>
+                        {(label === 'Account No.' || label === 'Reference') && (
+                          <button
+                            onClick={() => { navigator.clipboard?.writeText(String(val)); setCopiedOnrampAcct(label); setTimeout(() => setCopiedOnrampAcct(false), 1500); }}
+                            style={{ background: 'none', border: 'none', color: copiedOnrampAcct === label ? 'var(--lime)' : '#8e9aa8', cursor: 'pointer', fontSize: '13px', padding: '2px', flexShrink: 0 }}
+                          >
+                            {copiedOnrampAcct === label ? '✓' : '📋'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Divider */}
+                <div style={{ height: '1px', background: 'rgba(255,255,255,0.08)', margin: '0 0 20px 0' }} />
+
+                {/* Status row */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', fontSize: '13px' }}>
+                  <span style={{ color: '#8e9aa8' }}>Status</span>
+                  <span style={{
+                    fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.04em',
+                    color: onrampStatus === 'completed' ? '#22c55e' : onrampStatus === 'failed' ? '#ef4444' : (onrampStatus === 'swapping' || onrampStatus === 'forwarding') ? '#60a5fa' : '#eab308',
+                  }}>
+                    {onrampStatus === 'completed' ? '✓ Completed'
+                      : onrampStatus === 'failed' ? '✕ Failed'
+                      : onrampStatus === 'forwarding' ? '🔄 Forwarding...'
+                      : onrampStatus === 'swapping' ? `🔄 Swapping to ${liveSelectedToken.symbol}...`
+                      : onrampStatus === 'paid' || onrampStatus === 'processing' ? '⏳ Confirming Payment...'
+                      : '⏳ Awaiting Payment'}
+                  </span>
+                </div>
+
+                {/* Action button */}
+                {onrampStatus === 'completed' ? (
+                  <button
+                    className="send-btn"
+                    onClick={() => { setOnrampOrder(null); setOnrampStatus(null); setOnrampAmount(''); }}
+                  >
+                    🎉 Done — Start New Order
+                  </button>
+                ) : onrampStatus === 'paid' || onrampStatus === 'processing' || onrampStatus === 'swapping' || onrampStatus === 'forwarding' ? (
+                  <button
+                    className="send-btn"
+                    disabled
+                    style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.25)', color: '#60a5fa', cursor: 'not-allowed', opacity: 0.85 }}
+                  >
+                    <span className="p2p-mini-spinner" style={{ marginRight: '8px' }} />
+                    {onrampStatus === 'forwarding' ? 'Forwarding USDC...'
+                      : onrampStatus === 'swapping' ? `Swapping to ${liveSelectedToken.symbol}...`
+                      : 'Confirming Payment...'}
+                  </button>
+                ) : (
+                  <button
+                    onClick={async () => {
+                      const orderId = onrampOrder.id;
+                      setOnrampLoading(true);
+                      try {
+                        await paidOnrampOrder(orderId, sessionToken);
+                        updateP2PTransactionStatus(orderId, 'PAID');
+                      } catch {}
+                      setOnrampStatus('paid');
+                      setOnrampLoading(false);
+                    }}
+                    disabled={onrampLoading}
+                    className="send-btn"
+                    style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.35)', color: 'var(--lime)', fontWeight: '700', fontSize: '15px' }}
+                  >
+                    {onrampLoading ? <><span className="p2p-mini-spinner" style={{ marginRight: '8px' }} />Processing...</> : '✅ I Have Paid'}
+                  </button>
+                )}
+
               </div>
             </div>
           )}
@@ -3142,131 +3226,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
             </button>
           )}
 
-          {onrampOrder && (
-            <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {/* If order is completed */}
-              {onrampStatus === 'completed' ? (
-                <button
-                  className="send-btn"
-                  onClick={() => { setOnrampOrder(null); setOnrampStatus(null); setOnrampAmount(''); }}
-                  style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)', fontSize: '13px' }}
-                >
-                  Start New Order
-                </button>
-              ) : (
-                /* If order is pending / not yet completed */
-                <>
-                  {onrampStatus !== 'paid' && onrampStatus !== 'processing' && onrampStatus !== 'swapping' ? (
-                    <div style={{ display: 'flex', gap: '10px' }}>
-                      <button
-                        onClick={async () => {
-                          const orderId = onrampOrder.id;
-                          setOnrampLoading(true);
-                          try {
-                            await cancelOnrampOrder(orderId, sessionToken);
-                            updateP2PTransactionStatus(orderId, 'CANCELLED');
-                          } catch {}
-                          // Clean up UI & socket
-                          if (onrampSocketRef.current) {
-                            try { onrampSocketRef.current.disconnect(); } catch {}
-                            onrampSocketRef.current = null;
-                          }
-                          setOnrampOrder(null);
-                          setOnrampStatus(null);
-                          setOnrampAmount('');
-                          setOnrampLoading(false);
-                        }}
-                        disabled={onrampLoading}
-                        style={{
-                          flex: 1,
-                          padding: '12px',
-                          borderRadius: '12px',
-                          background: 'rgba(239, 68, 68, 0.15)',
-                          border: '1px solid rgba(239, 68, 68, 0.4)',
-                          color: '#f87171',
-                          fontWeight: '600',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: '13px',
-                          outline: 'none'
-                        }}
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        onClick={async () => {
-                          const orderId = onrampOrder.id;
-                          setOnrampLoading(true);
-                          try {
-                            await paidOnrampOrder(orderId, sessionToken);
-                            updateP2PTransactionStatus(orderId, 'PAID');
-                          } catch {}
-                          setOnrampStatus('paid');
-                          setOnrampLoading(false);
-                        }}
-                        disabled={onrampLoading}
-                        style={{
-                          flex: 1,
-                          padding: '12px',
-                          borderRadius: '12px',
-                          background: 'rgba(16, 185, 129, 0.15)',
-                          border: '1px solid rgba(16, 185, 129, 0.4)',
-                          color: 'var(--lime)',
-                          fontWeight: '600',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: '13px',
-                          outline: 'none'
-                        }}
-                      >
-                        Paid
-                      </button>
-                    </div>
-                  ) : (
-                    /* Once they click Paid (status changes to 'paid', 'processing', 'swapping') */
-                    <button
-                      className="send-btn"
-                      disabled={true}
-                      style={{
-                        background: (onrampStatus === 'swapping' || onrampStatus === 'forwarding') ? 'rgba(59, 130, 246, 0.08)' : 'rgba(16, 185, 129, 0.08)',
-                        border: (onrampStatus === 'swapping' || onrampStatus === 'forwarding') ? '1px solid rgba(59, 130, 246, 0.25)' : '1px solid rgba(16, 185, 129, 0.25)',
-                        color: (onrampStatus === 'swapping' || onrampStatus === 'forwarding') ? '#60a5fa' : 'var(--lime)',
-                        fontSize: '13px',
-                        cursor: 'not-allowed',
-                        opacity: 0.8
-                      }}
-                    >
-                      {onrampStatus === 'forwarding'
-                        ? '🔄 Forwarding USDC...'
-                        : onrampStatus === 'swapping'
-                          ? `🔄 Swapping USDC to ${liveSelectedToken.symbol}...`
-                          : '⏳ Confirming Payment...'}
-                    </button>
-                  )}
 
-                  {/* Start New Order button showing under the action buttons (discreetly) */}
-                  <button
-                    onClick={() => {
-                      if (onrampSocketRef.current) {
-                        try { onrampSocketRef.current.disconnect(); } catch {}
-                        onrampSocketRef.current = null;
-                      }
-                      setOnrampOrder(null);
-                      setOnrampStatus(null);
-                      setOnrampAmount('');
-                    }}
-                    style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', fontSize: '11px', marginTop: '6px', textAlign: 'center', width: '100%', outline: 'none' }}
-                  >
-                    Start New Order
-                  </button>
-                </>
-              )}
-            </div>
-          )}
         </div>
         ) : (
         /* ── Coming soon for non-Nigeria Buy ── */
