@@ -3120,12 +3120,28 @@ export default function P2PPanel({ connected, walletTokenList }) {
               className="send-btn"
               onClick={handleOnrampSubmit}
               disabled={onrampLoading || !parsedOnrampAmt || parsedOnrampAmt <= 0 || !sessionToken}
-              style={{ opacity: (onrampLoading || !parsedOnrampAmt || !sessionToken) ? 0.6 : 1, cursor: 'pointer' }}
+              style={{ opacity: (onrampLoading || !parsedOnrampAmt || !sessionToken) ? 0.6 : 1, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', padding: '13px 16px' }}
             >
-              {onrampLoading && <span className="p2p-mini-spinner" style={{ marginRight: '6px' }} />}
-              {onrampLoading ? 'Getting Bank Details...' : '🏦 Get Bank Details'}
+              {onrampLoading ? (
+                <>
+                  <span className="p2p-mini-spinner" style={{ marginBottom: '2px' }} />
+                  <span style={{ fontSize: '13px' }}>Getting Bank Details...</span>
+                </>
+              ) : parsedOnrampAmt > 0 ? (
+                <>
+                  <span style={{ fontSize: '16px', fontWeight: '800', letterSpacing: '-0.3px' }}>
+                    Pay ₦{(parsedOnrampAmt + PLATFORM_FEE_NGN).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                  </span>
+                  <span style={{ fontSize: '11px', fontWeight: '500', opacity: 0.75 }}>
+                    🏦 Get Bank Details →
+                  </span>
+                </>
+              ) : (
+                <span style={{ fontSize: '14px' }}>🏦 Get Bank Details</span>
+              )}
             </button>
           )}
+
           {onrampOrder && (
             <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {/* If order is completed */}
