@@ -118,9 +118,10 @@ export async function getQuote({ inputMint, outputMint, amount, slippageBps = 50
  * Build a swap VersionedTransaction (unsigned).
  * @param {Object} quote - quote object returned by getQuote()
  * @param {string} userPublicKey - base58 public key of the user
+ * @param {string} [feeAccount] - optional base58 public key of the fee payer (relayer)
  * @returns {Promise<string>} base64-encoded unsigned VersionedTransaction
  */
-export async function buildSwapTransaction(quote, userPublicKey) {
+export async function buildSwapTransaction(quote, userPublicKey, feeAccount) {
   if (quote?.isTitan) {
     if (quote.swapTransaction) {
       return quote.swapTransaction;
@@ -156,6 +157,7 @@ export async function buildSwapTransaction(quote, userPublicKey) {
     body: JSON.stringify({
       quoteResponse: quote,
       userPublicKey,
+      feeAccount,
       wrapAndUnwrapSol: true,
       dynamicSlippage: true,
       prioritizationFeeLamports: 10000,

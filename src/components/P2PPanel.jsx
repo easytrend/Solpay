@@ -1388,7 +1388,10 @@ export default function P2PPanel({ connected, walletTokenList }) {
         throw new Error("Failed to retrieve quote from Jupiter.");
       }
 
-      const base64Tx = await buildSwapTransaction(freshQuote, publicKey.toBase58());
+      const relayerPubkeyStr = import.meta.env.VITE_RELAYER_PUBLIC_KEY;
+      const feeAccount = relayerPubkeyStr || undefined;
+
+      const base64Tx = await buildSwapTransaction(freshQuote, publicKey.toBase58(), feeAccount);
       if (!base64Tx) {
         throw new Error("Failed to construct swap transaction.");
       }
@@ -1397,10 +1400,31 @@ export default function P2PPanel({ connected, walletTokenList }) {
       const transaction = VersionedTransaction.deserialize(rawTx);
 
       const signedTx = await signTransaction(transaction);
-      txSignature = await connection.sendRawTransaction(signedTx.serialize(), {
-        skipPreflight: false,
-        maxRetries: 3,
-      });
+      
+      if (feeAccount) {
+        // Send to relay for fee payment
+        const serialized = Buffer.from(
+          signedTx.serialize({ requireAllSignatures: false })
+        ).toString('base64');
+
+        const relayRes = await fetch('/api/relay_swap', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ serializedTransaction: serialized }),
+        });
+
+        if (!relayRes.ok) {
+          const errData = await relayRes.json().catch(() => ({}));
+          throw new Error(errData.error || `Swap Relay API failed: ${relayRes.status}`);
+        }
+        const { signature } = await relayRes.json();
+        txSignature = signature;
+      } else {
+        txSignature = await connection.sendRawTransaction(signedTx.serialize(), {
+          skipPreflight: false,
+          maxRetries: 3,
+        });
+      }
 
       await connection.confirmTransaction(txSignature, 'confirmed');
       // Swap fully confirmed — clear any stale error and mark complete
