@@ -3056,7 +3056,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
                     <span style={{ display: 'block', marginTop: '3px', color: '#facc15', fontWeight: '600', fontSize: '10.5px', letterSpacing: '0.01em' }}>
                       + ₦{PLATFORM_FEE_NGN.toLocaleString()} service fee added to your payment
                     </span>
-                    <span style={{ display: 'block', marginTop: '2px', color: 'rgba(255,255,255,0.3)', fontSize: '9.5px', fontStyle: 'italic' }}>
+                    <span style={{ display: 'block', marginTop: '2px', color: 'var(--lime)', fontSize: '10px', fontWeight: '600', letterSpacing: '0.01em' }}>
                       * Final NGN may vary slightly to align with PajCash live conversion rates.
                     </span>
                   </>
