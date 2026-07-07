@@ -1237,23 +1237,28 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const estCryptoAmount = offrampInputMode === 'fiat' ? (ngnRate > 0 ? parsedAmt / ngnRate : 0) : parsedAmtRaw;
 
   // ── Platform Fee: $0.10 in CRYPTO on every On/Offramp ──────────────────────
-  // Fee is collected in the user's chosen crypto — never from the NGN payout.
-  // Offramp: user sends estCryptoAmount + fee_in_token; NGN payout is for the full trade amount.
-  // Onramp:  user pays NGN; receives gross USDC minus 0.10 USDC.
+  // ── Offramp fee (crypto-side, unchanged) ───────────────────────────────────
   const PLATFORM_FEE_USD = 0.10;
-  const platformFeeInToken = tokenPriceUsd > 0 ? PLATFORM_FEE_USD / tokenPriceUsd : 0; // $0.10 in token units
-  const platformFee = PLATFORM_FEE_USD; // passed to PajCash as businessUSDCFee
-  const baseCryptoAmount = estCryptoAmount + platformFeeInToken; // user sends trade + fee in their token
+  const platformFeeInToken = tokenPriceUsd > 0 ? PLATFORM_FEE_USD / tokenPriceUsd : 0;
+  const platformFee = PLATFORM_FEE_USD;
+  const baseCryptoAmount = estCryptoAmount + platformFeeInToken;
   const fiatAmountText = parsedAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  // ── Onramp fee (₦200 flat — added ON TOP of buyer's Naira payment) ─────────
+  // PajCash receives (fiatAmount + ₦200), converts the ₦200 to USDC at the live
+  // rate, and deposits that USDC directly into the developer's merchant account.
+  // The buyer's USDC receipt is based on fiatAmount only — they get exactly what
+  // the quote shows; they just pay ₦200 extra on the Naira side.
+  const PLATFORM_FEE_NGN = 200; // ₦200 flat platform fee
+  // Convert the ₦200 fee to its USDC equivalent so we can pass it to PajCash's
+  // businessUSDCFee field. PajCash uses this to compute the exact naira uplift.
+  const platformFeeUsdc = onrampNgnRate > 0 ? PLATFORM_FEE_NGN / onrampNgnRate : 0;
 
   const parsedOnrampAmtRaw = parseFloat(onrampAmount) || 0;
   const parsedOnrampAmt = onrampInputMode === 'crypto' ? parsedOnrampAmtRaw * onrampNgnRate : parsedOnrampAmtRaw;
   const grossOnrampCrypto = onrampInputMode === 'fiat' ? (onrampNgnRate > 0 ? parsedOnrampAmt / onrampNgnRate : 0) : parsedOnrampAmtRaw;
-  // Platform fee is deducted from the USDC the user receives — the NGN they send never changes.
-  // We pass this to PajCash as `fee` so they handle the deduction natively on their end.
-  const onrampFee = 0;
-  // Use the live PajCash quote (pajcashNetUsdc) when available — it reflects PajCash's OWN fees.
-  // Fall back to the naive fiatAmount/rate estimate while loading.
+  // Use the live PajCash quote (pajcashNetUsdc) when available — it already
+  // reflects PajCash's own processing fee on the base fiatAmount.
   const estOnrampCrypto = pajcashNetUsdc !== null
     ? pajcashNetUsdc
     : grossOnrampCrypto;
@@ -1261,13 +1266,13 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const displayOnrampAmount = useMemo(() => {
     if (parsedOnrampAmt <= 0) return 0;
     if (liveSelectedToken.symbol === 'USDC' || liveSelectedToken.symbol === 'USDT') {
-      return estOnrampCrypto - onrampFee;
+      return estOnrampCrypto; // full quote amount — fee is on the naira side, not deducted from USDC received
     }
     if (jupiterQuote && jupiterQuote.outAmount) {
       return Number(jupiterQuote.outAmount) / Math.pow(10, liveSelectedToken.decimals);
     }
     return 0;
-  }, [parsedOnrampAmt, liveSelectedToken, estOnrampCrypto, onrampFee, jupiterQuote]);
+  }, [parsedOnrampAmt, liveSelectedToken, estOnrampCrypto, jupiterQuote]);
 
   const displayOnrampRate = useMemo(() => {
     if (liveSelectedToken.symbol === 'USDC' || liveSelectedToken.symbol === 'USDT') {
@@ -1369,16 +1374,16 @@ export default function P2PPanel({ connected, walletTokenList }) {
         ? liveSelectedToken.mint
         : 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'; // Default to USDC mint
 
+      // platformFeeUsdc = ₦200 converted to USDC at the live rate.
+      // PajCash will uplift the buyer's payment by the Naira equivalent of this
+      // USDC amount and deposit that USDC into the developer's merchant account.
       const order = await createOnrampOrder(
         {
           currency: 'NGN',
           fiatAmount: parsedOnrampAmt,
           recipient: publicKey.toBase58(),
           chain: 'SOLANA',
-          // NOTE: Do NOT pass fee here. PajCash's `fee` param adds to the fiat the user
-          // must transfer (making them pay MORE naira than they typed), not deducts from USDC.
-          // Our $0.10 platform fee is deducted from the displayed USDC estimate and from the
-          // auto-swap amount — the NGN amount the user sends is always exactly what they typed.
+          fee: platformFeeUsdc, // ₦200 → USDC; PajCash adds this to the buyer's NGN bill
           mint: onrampMint,
         },
         sessionToken
@@ -3022,12 +3027,17 @@ export default function P2PPanel({ connected, walletTokenList }) {
               </div>
             </div>
 
-            {/* Exchange rate — shown below Amount input block */}
+            {/* Exchange rate + service fee — shown below Amount input block */}
             {pajRates?.onRampRate?.rate && (
               <div style={{ marginTop: '6px', fontSize: '11px' }}>
                 <span style={{ color: 'rgba(255,255,255,0.38)' }}>
                   1 {liveSelectedToken.symbol} ≈ {selectedCountry.symbol}{displayOnrampRate.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
+                {onrampAmount && Number(onrampAmount) > 0 && (
+                  <span style={{ display: 'block', marginTop: '3px', color: '#facc15', fontWeight: '600', fontSize: '10.5px', letterSpacing: '0.01em' }}>
+                    + ₦{PLATFORM_FEE_NGN.toLocaleString()} service fee added to your payment
+                  </span>
+                )}
               </div>
             )}
           </div>
