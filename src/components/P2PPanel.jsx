@@ -1065,7 +1065,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
   useEffect(() => {
     if (mode === 'sell') {
       const available = selectableTokens.some(t => t.symbol === selectedToken.symbol || t.mint === selectedToken.mint);
-      const isLiveToken = selectedToken.symbol === 'USDC' || selectedToken.symbol === 'USDT';
+      // We allow the selectedToken to remain in Sell mode if it is USDC, USDT, USDG, or any available custom token
+      const isLiveToken = selectedToken.symbol === 'USDC' || selectedToken.symbol === 'USDT' || selectedToken.symbol === 'USDG' || available;
       if ((!available || !isLiveToken) && selectableTokens.length > 0) {
         const usdc = selectableTokens.find(t => t.symbol === 'USDC') || selectableTokens[0];
         setSelectedToken(usdc);
@@ -2666,56 +2667,97 @@ export default function P2PPanel({ connected, walletTokenList }) {
                     </div>
 
                     {tokenOpen && (
-                      <div className="drop-menu" style={{ right: 0, minWidth: '220px', zIndex: 100 }}>
-                        {selectableTokens.map(t => {
-                          const isLiveToken = t.symbol === 'USDC' || t.symbol === 'USDT';
-                          return (
-                            <div
-                              key={t.mint || t.symbol}
-                              className={`drop-item ${liveSelectedToken.symbol === t.symbol ? 'sel' : ''}`}
-                              onClick={() => {
-                                if (!isLiveToken) return; // block non-USDC/USDT
-                                setSelectedToken(t);
-                                setTokenOpen(false);
-                              }}
-                              style={{
-                                display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 12px',
-                                opacity: isLiveToken ? 1 : 0.55,
-                                cursor: isLiveToken ? 'pointer' : 'not-allowed',
-                              }}
-                            >
-                              {t.logoURI ? (
-                                <img src={t.logoURI} alt={t.symbol} style={{ width: '20px', height: '20px', borderRadius: '50%' }} />
-                              ) : (
-                                <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(255,255,255,0.1)', color: 'white', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>
-                                  {t.symbol.slice(0, 2)}
-                                </div>
-                              )}
-                              <span className="di-code" style={{ marginLeft: 0 }}>{t.symbol}</span>
-                              {isLiveToken ? (
-                                t.balance > 0 && (
-                                  <span className="di-name" style={{ marginLeft: 'auto' }}>
-                                    {t.balance.toLocaleString(undefined, { maximumFractionDigits: 4 })}
-                                  </span>
-                                )
-                              ) : (
-                                <span style={{
-                                  marginLeft: 'auto',
-                                  fontSize: '9px',
-                                  fontWeight: '700',
-                                  color: '#f59e0b',
-                                  background: 'rgba(245,158,11,0.12)',
-                                  border: '1px solid rgba(245,158,11,0.3)',
-                                  borderRadius: '4px',
-                                  padding: '1px 5px',
-                                  letterSpacing: '0.03em',
-                                  textTransform: 'uppercase',
-                                  flexShrink: 0,
-                                }}>Coming Soon</span>
-                              )}
-                            </div>
-                          );
-                        })}
+                      <div className="drop-menu" style={{ right: 0, minWidth: '240px', maxHeight: '300px', overflowY: 'auto', zIndex: 100 }}>
+                        <input
+                          type="text"
+                          placeholder="Search ticker or address..."
+                          value={tokenSearchQuery}
+                          onChange={(e) => setTokenSearchQuery(e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                          style={{
+                            width: 'calc(100% - 16px)',
+                            margin: '8px',
+                            padding: '6px 10px',
+                            background: 'rgba(255, 255, 255, 0.05)',
+                            border: '1px solid rgba(255, 255, 255, 0.1)',
+                            borderRadius: '12px',
+                            color: 'white',
+                            fontSize: '12px',
+                            outline: 'none',
+                          }}
+                          autoFocus
+                        />
+                        {searchingTokens ? (
+                          <div style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'rgba(255,255,255,0.5)' }}>Searching...</div>
+                        ) : tokenSearchQuery.trim() !== '' ? (
+                          tokenSearchResults.length === 0 ? (
+                            <div style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'rgba(255,255,255,0.5)' }}>No tokens found</div>
+                          ) : (
+                            tokenSearchResults.map(t => (
+                              <div
+                                key={t.mint || t.symbol}
+                                className={`drop-item ${liveSelectedToken.symbol === t.symbol ? 'sel' : ''}`}
+                                onClick={() => {
+                                  setSelectedToken(t);
+                                  setTokenOpen(false);
+                                  setTokenSearchQuery('');
+                                }}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '8px',
+                                  padding: '10px 12px',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                {t.logoURI ? (
+                                  <img src={t.logoURI} alt={t.symbol} style={{ width: '20px', height: '20px', borderRadius: '50%' }} />
+                                ) : (
+                                  <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(255,255,255,0.1)', color: 'white', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>
+                                    {t.symbol.slice(0, 2)}
+                                  </div>
+                                )}
+                                <span className="di-code" style={{ marginLeft: 0 }}>{t.symbol}</span>
+                                <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.3)', marginLeft: 'auto', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '80px' }}>
+                                  {t.mint.slice(0, 4)}...{t.mint.slice(-4)}
+                                </span>
+                              </div>
+                            ))
+                          )
+                        ) : (
+                          // Default view: only show stablecoins (USDC, USDT, USDG) and hide their quantities (balances)
+                          selectableTokens.filter(t => t.symbol === 'USDC' || t.symbol === 'USDT' || t.symbol === 'USDG').map(t => {
+                            const isLiveToken = t.symbol === 'USDC' || t.symbol === 'USDT' || t.symbol === 'USDG';
+                            return (
+                              <div
+                                key={t.mint || t.symbol}
+                                className={`drop-item ${liveSelectedToken.symbol === t.symbol ? 'sel' : ''}`}
+                                onClick={() => {
+                                  if (!isLiveToken) return;
+                                  setSelectedToken(t);
+                                  setTokenOpen(false);
+                                }}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '8px',
+                                  padding: '10px 12px',
+                                  opacity: isLiveToken ? 1 : 0.55,
+                                  cursor: isLiveToken ? 'pointer' : 'not-allowed',
+                                }}
+                              >
+                                {t.logoURI ? (
+                                  <img src={t.logoURI} alt={t.symbol} style={{ width: '20px', height: '20px', borderRadius: '50%' }} />
+                                ) : (
+                                  <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(255,255,255,0.1)', color: 'white', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>
+                                    {t.symbol.slice(0, 2)}
+                                  </div>
+                                )}
+                                <span className="di-code" style={{ marginLeft: 0 }}>{t.symbol}</span>
+                              </div>
+                            );
+                          })
+                        )}
                       </div>
                     )}
                   </div>
