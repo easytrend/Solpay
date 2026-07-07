@@ -1523,9 +1523,11 @@ export default function P2PPanel({ connected, walletTokenList }) {
     // Check if we are using the relayer intermediary for onramp fee deduction
     const relayerPubkeyStr = import.meta.env.VITE_RELAYER_PUBLIC_KEY;
     const isRelayerActive = !!relayerPubkeyStr;
+    let step = 'init';
 
     try {
       if (isRelayerActive) {
+        step = 'forwarding';
         setOnrampStatus('forwarding');
         // Call backend API to deduct the fee and forward USDC to user
         const res = await fetch('/api/relay_onramp_fee', {
@@ -1544,6 +1546,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
       // If the user is buying a custom token, trigger the auto-swap
       if (liveSelectedToken.symbol !== 'USDC' && liveSelectedToken.symbol !== 'USDT') {
+        step = 'swapping';
         setOnrampStatus('swapping');
         await triggerJupiterSwap();
       } else {
@@ -1552,19 +1555,19 @@ export default function P2PPanel({ connected, walletTokenList }) {
     } catch (err) {
       console.error('handleOrderCompleted failed:', err);
       const msg = err.message || String(err);
-      const isWalletAdapterGlitch = msg.includes('WalletSignTransactionError') || msg.includes('user rejected') || msg.includes('Transaction was not confirmed');
       
-      if (isRelayerActive && onrampStatus === 'forwarding') {
+      if (step === 'forwarding') {
         setOnrampError(`Payment received. Failed to transfer USDC to your wallet: ${msg}. Contact support with Order ID.`);
         setOnrampStatus('failed');
-      } else if (!isWalletAdapterGlitch) {
-        setOnrampError(`Payment received. Auto-swap to ${liveSelectedToken.symbol} failed — your USDC is safe. Tap "Swap" tab to swap manually.`);
-        setOnrampStatus('completed');
       } else {
+        const isWalletAdapterGlitch = msg.includes('WalletSignTransactionError') || msg.includes('user rejected') || msg.includes('Transaction was not confirmed');
+        if (!isWalletAdapterGlitch) {
+          setOnrampError(`Payment received. Auto-swap to ${liveSelectedToken.symbol} failed — your USDC is safe. Tap "Swap" tab to swap manually.`);
+        }
         setOnrampStatus('completed');
       }
     }
-  }, [sessionToken, liveSelectedToken, triggerJupiterSwap, onrampStatus]);
+  }, [sessionToken, liveSelectedToken, triggerJupiterSwap]);
 
   // ── Polling Fallback for Onramp Order Status ──────────────────────────────
   useEffect(() => {

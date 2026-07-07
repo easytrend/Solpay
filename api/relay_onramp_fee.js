@@ -79,6 +79,9 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
+  let globalOrderId = null;
+  let supabase = null;
+
   try {
     // 1. Load keys and check configuration
     const relayerSecret = process.env.RELAYER_SECRET_KEY;
@@ -92,7 +95,7 @@ export default async function handler(req, res) {
     if (!supabaseUrl || !supabaseAnonKey) {
       return res.status(503).json({ error: 'Supabase credentials missing' });
     }
-    const supabase = createClient(supabaseUrl, supabaseAnonKey);
+    supabase = createClient(supabaseUrl, supabaseAnonKey);
 
     // 2. Parse request body
     let body = req.body;
@@ -103,6 +106,8 @@ export default async function handler(req, res) {
     }
 
     const { orderId, sessionToken } = body || {};
+    globalOrderId = orderId;
+
     if (!orderId) {
       return res.status(400).json({ error: 'Missing orderId' });
     }
@@ -122,6 +127,9 @@ export default async function handler(req, res) {
         if (response.ok) {
           pajTx = await response.json();
           break;
+        } else {
+          const text = await response.text();
+          pajError = new Error(`PajCash returned status ${response.status}: ${text}`);
         }
       } catch (err) {
         pajError = err;
@@ -129,19 +137,21 @@ export default async function handler(req, res) {
     }
 
     if (!pajTx) {
-      return res.status(400).json({ error: `Could not verify transaction with PajCash API: ${pajError?.message || 'Unauthorized or Not Found'}` });
+      const errMsg = `Could not verify transaction with PajCash API: ${pajError?.message || 'Unauthorized or Not Found'}`;
+      throw new Error(errMsg);
     }
 
-    // Verify order completion and recipient
+    // Verify order completion
     const status = (pajTx.status || '').toUpperCase();
     const isCompleted = status === 'COMPLETED' || status === 'SUCCESSFUL' || status === 'CONFIRMED' || status === 'SUCCESS';
     if (!isCompleted) {
-      return res.status(400).json({ error: `PajCash order status is ${status}, not completed.` });
+      throw new Error(`PajCash order status is ${status}, not completed.`);
     }
 
-    const recipient = pajTx.recipient || '';
+    // Verify recipient matches relayer
+    const recipient = pajTx.recipient || pajTx.wallet || pajTx.address || '';
     if (recipient !== relayerKp.publicKey.toBase58()) {
-      return res.status(400).json({ error: 'Unauthorized: Relayer was not the recipient of this PajCash order.' });
+      throw new Error(`Unauthorized: Relayer (${relayerKp.publicKey.toBase58()}) was not the recipient of this PajCash order. Got recipient: "${recipient}". Details: ${JSON.stringify(pajTx)}`);
     }
 
     // 4. Resolve actual user wallet from Supabase
@@ -152,19 +162,19 @@ export default async function handler(req, res) {
       .single();
 
     if (dbError || !dbTx) {
-      return res.status(400).json({ error: `Could not find transaction mapping in database: ${dbError?.message || 'Record not found'}` });
+      throw new Error(`Could not find transaction mapping in database: ${dbError?.message || 'Record not found'}`);
     }
 
     const userAddressStr = dbTx.user_address;
     if (!userAddressStr) {
-      return res.status(400).json({ error: 'Database record is missing user Solana address' });
+      throw new Error('Database record is missing user Solana address');
     }
     const userPublicKey = new PublicKey(userAddressStr);
 
     // Double forwarding prevention check
     const currentDbStatus = (dbTx.status || '').toUpperCase();
     if (currentDbStatus === 'FORWARDED_SUCCESS') {
-      return res.status(400).json({ error: 'This order has already been successfully forwarded.' });
+      return res.status(200).json({ signature: dbTx.signature, netAmount: dbTx.crypto_amount - 0.10, alreadyForwarded: true });
     }
 
     // 5. Build forwarding transaction
@@ -178,7 +188,7 @@ export default async function handler(req, res) {
     const units = BigInt(Math.round(netAmount * 1_000_000)); // USDC has 6 decimals
 
     if (units <= 0n) {
-      return res.status(400).json({ error: `USDC transfer units is too small: ${netAmount}` });
+      throw new Error(`USDC transfer units is too small: ${netAmount}`);
     }
 
     const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
@@ -235,22 +245,35 @@ export default async function handler(req, res) {
     console.log(`[relay_onramp_fee] Forwarded ${netAmount} USDC to ${userAddressStr}. Tx: ${sig}`);
 
     // 6. Update database status to FORWARDED_SUCCESS
-    const { error: updateError } = await supabase
+    await supabase
       .from('p2p_transactions')
       .update({
         status: 'FORWARDED_SUCCESS',
         signature: sig,
+        deposit_address: null, // Clear error logs if any
         updated_at: new Date().toISOString()
       })
       .eq('order_id', String(orderId));
 
-    if (updateError) {
-      console.warn(`[relay_onramp_fee] Failed to update database status: ${updateError.message}`);
-    }
-
     return res.status(200).json({ signature: sig, netAmount });
   } catch (error) {
     console.error('[relay_onramp_fee] Unhandled crash:', error);
+    
+    // Remote logging to Supabase so we can query it using query_failed_order.js
+    if (supabase && globalOrderId) {
+      try {
+        await supabase
+          .from('p2p_transactions')
+          .update({
+            status: 'FORWARD_FAILED',
+            deposit_address: `Error: ${error.message || String(error)}`
+          })
+          .eq('order_id', String(globalOrderId));
+      } catch (dbErr) {
+        console.error('Failed to log error to Supabase:', dbErr.message);
+      }
+    }
+
     return res.status(500).json({ error: error.message || 'Internal Server Error' });
   }
 }
