@@ -117,11 +117,13 @@ export async function getQuote({ inputMint, outputMint, amount, slippageBps = 50
 /**
  * Build a swap VersionedTransaction (unsigned).
  * @param {Object} quote - quote object returned by getQuote()
- * @param {string} userPublicKey - base58 public key of the user
- * @param {string} [feePayer] - optional base58 public key of the fee payer (relayer)
+ * @param {string} userPublicKey - base58 public key of the user (token owner)
+ * @param {string} [payer] - optional base58 public key of the gas fee payer (relayer).
+ *   When `payer` differs from `userPublicKey`, Jupiter routes through Metis and returns
+ *   a transaction that requires BOTH signatures (user + payer) before broadcast.
  * @returns {Promise<string>} base64-encoded unsigned VersionedTransaction
  */
-export async function buildSwapTransaction(quote, userPublicKey, feePayer) {
+export async function buildSwapTransaction(quote, userPublicKey, payer) {
   if (quote?.isTitan) {
     if (quote.swapTransaction) {
       return quote.swapTransaction;
@@ -138,7 +140,7 @@ export async function buildSwapTransaction(quote, userPublicKey, feePayer) {
         amount: Number(quote.inAmount),
         slippageBps: Number(quote.slippageBps || 50),
         userPublicKey,
-        feePayer
+        payer
       })
     });
 
@@ -152,13 +154,15 @@ export async function buildSwapTransaction(quote, userPublicKey, feePayer) {
   }
 
   // Default Jupiter V1 Flow
+  // When `payer` !== `userPublicKey`, Jupiter sets payer as the fee payer (index 0)
+  // and requires both the user's signature and the payer's signature before broadcast.
   const res = await fetch(`${QUOTE_API}/swap`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       quoteResponse: quote,
       userPublicKey,
-      feePayer,
+      ...(payer && payer !== userPublicKey ? { payer } : {}),
       wrapAndUnwrapSol: true,
       dynamicSlippage: true,
       prioritizationFeeLamports: 10000,

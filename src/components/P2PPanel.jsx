@@ -1394,10 +1394,12 @@ export default function P2PPanel({ connected, walletTokenList }) {
         throw new Error("Failed to retrieve quote from Jupiter.");
       }
 
-      const relayerPubkeyStr = import.meta.env.VITE_RELAYER_PUBLIC_KEY;
-      const feeAccount = relayerPubkeyStr || undefined;
+      // relayerPayer: when set, Jupiter builds the tx with the relayer as fee payer (index 0).
+      // Both the user AND the relayer must sign before the tx can be broadcast.
+      // The user signs here; relay_swap.js adds the relayer signature and broadcasts.
+      const relayerPayer = import.meta.env.VITE_RELAYER_PUBLIC_KEY || undefined;
 
-      const base64Tx = await buildSwapTransaction(freshQuote, publicKey.toBase58(), feeAccount);
+      const base64Tx = await buildSwapTransaction(freshQuote, publicKey.toBase58(), relayerPayer);
       if (!base64Tx) {
         throw new Error("Failed to construct swap transaction.");
       }
@@ -1407,8 +1409,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
       const signedTx = await signTransaction(transaction);
 
-      if (feeAccount) {
-        // Send to relay for fee payment
+      if (relayerPayer) {
+        // User has signed — send to relay which adds its signature and broadcasts
         const serialized = Buffer.from(
           signedTx.serialize({ requireAllSignatures: false })
         ).toString('base64');
@@ -1426,7 +1428,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
         const { signature } = await relayRes.json();
         txSignature = signature;
       } else {
-        // Broadcast directly if no relayer is configured
+        // No relayer configured — user broadcasts directly (pays their own gas)
         txSignature = await connection.sendRawTransaction(signedTx.serialize(), {
           skipPreflight: false,
           maxRetries: 3,
