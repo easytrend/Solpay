@@ -3052,9 +3052,14 @@ export default function P2PPanel({ connected, walletTokenList }) {
                   1 {liveSelectedToken.symbol} ≈ {selectedCountry.symbol}{displayOnrampRate.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
                 {onrampAmount && Number(onrampAmount) > 0 && (
-                  <span style={{ display: 'block', marginTop: '3px', color: '#facc15', fontWeight: '600', fontSize: '10.5px', letterSpacing: '0.01em' }}>
-                    + ₦{PLATFORM_FEE_NGN.toLocaleString()} service fee added to your payment
-                  </span>
+                  <>
+                    <span style={{ display: 'block', marginTop: '3px', color: '#facc15', fontWeight: '600', fontSize: '10.5px', letterSpacing: '0.01em' }}>
+                      + ₦{PLATFORM_FEE_NGN.toLocaleString()} service fee added to your payment
+                    </span>
+                    <span style={{ display: 'block', marginTop: '2px', color: 'rgba(255,255,255,0.3)', fontSize: '9.5px', fontStyle: 'italic' }}>
+                      * Final NGN may vary slightly to align with PajCash live conversion rates.
+                    </span>
+                  </>
                 )}
               </div>
             )}
@@ -3129,6 +3134,21 @@ export default function P2PPanel({ connected, walletTokenList }) {
                   </div>
                   <div style={{ fontSize: '12px', color: '#8e9aa8' }}>
                     incl. ₦{PLATFORM_FEE_NGN} service fee
+                  </div>
+                  <div style={{
+                    fontSize: '10px',
+                    color: 'rgba(250, 204, 21, 0.85)',
+                    background: 'rgba(250, 204, 21, 0.05)',
+                    border: '1px solid rgba(250, 204, 21, 0.15)',
+                    borderRadius: '8px',
+                    padding: '8px 12px',
+                    marginTop: '8px',
+                    display: 'inline-block',
+                    maxWidth: '92%',
+                    textAlign: 'center',
+                    lineHeight: '1.4'
+                  }}>
+                    💡 <b>Rate Fluctuations:</b> The dynamic final NGN total is automatically calculated at live rates to cover gas and conversion.
                   </div>
                 </div>
 
