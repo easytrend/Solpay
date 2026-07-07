@@ -95,7 +95,7 @@ const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfc
 // PAID      = crypto received, fiat payout in progress
 // INIT      = order created, waiting for crypto
 const isConfirmed = (status) =>
-  status === 'COMPLETED' || status === 'SUCCESSFUL' || status === 'CONFIRMED'; // guard legacy value too
+  status === 'COMPLETED' || status === 'SUCCESSFUL' || status === 'CONFIRMED' || status === 'FORWARDED_SUCCESS'; // guard legacy and forwarded values too
 
 const isSettling = (status) => status === 'PAID';
 
@@ -312,6 +312,36 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const [copiedAccount, setCopiedAccount] = useState(false);
   const [showAmountTooltip, setShowAmountTooltip] = useState(false);
   const [relayerActive, setRelayerActive] = useState(false);
+
+  // ── Manual Release State for History Pop-up ──────────────────────────────
+  const [releasingLogId, setReleasingLogId] = useState(null);
+  const [releaseError, setReleaseError] = useState(null);
+  const [releaseSuccessTx, setReleaseSuccessTx] = useState(null);
+
+  const handleReleaseFunds = useCallback(async (orderId) => {
+    setReleaseError(null);
+    setReleaseSuccessTx(null);
+    setReleasingLogId(orderId);
+    try {
+      const res = await fetch('/api/relay_onramp_fee', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId, sessionToken })
+      });
+      const result = await res.json();
+      if (!res.ok) {
+        throw new Error(result.error || 'Failed to forward funds from relayer.');
+      }
+      setReleaseSuccessTx(result.signature);
+      // Update selectedLog status locally so the UI updates to Confirmed immediately
+      setSelectedLog(prev => prev ? { ...prev, status: 'FORWARDED_SUCCESS', sig: result.signature, signature: result.signature } : null);
+    } catch (err) {
+      console.error('Manual release failed:', err);
+      setReleaseError(err.message || String(err));
+    } finally {
+      setReleasingLogId(null);
+    }
+  }, [sessionToken]);
 
   // ── Onramp (Buy) State ───────────────────────────────────────────────────
   const [onrampAmount, setOnrampAmount] = useState(''); // amount user wants to send
@@ -3646,10 +3676,59 @@ export default function P2PPanel({ connected, walletTokenList }) {
                 )}
               </div>
 
+              {/* Manual Release Button for completed onramp orders that haven't been forwarded */}
+              {selectedLog.transaction_type === 'p2p_onramp' && 
+               (selectedLog.status === 'COMPLETED' || selectedLog.status === 'SUCCESSFUL' || selectedLog.status === 'CONFIRMED') && (
+                <div style={{ marginBottom: '16px' }}>
+                  <button
+                    className="send-btn"
+                    disabled={releasingLogId === orderId}
+                    onClick={() => handleReleaseFunds(orderId)}
+                    style={{
+                      width: '100%',
+                      padding: '14px',
+                      borderRadius: '13px',
+                      background: 'rgba(34, 197, 94, 0.1)',
+                      border: '1px solid rgba(34, 197, 94, 0.3)',
+                      color: '#22c55e',
+                      fontSize: '14px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      transition: 'background 0.2s'
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(34, 197, 94, 0.18)'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'rgba(34, 197, 94, 0.1)'}
+                  >
+                    {releasingLogId === orderId ? (
+                      <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                        <span className="p2p-mini-spinner" /> Releasing USDC...
+                      </span>
+                    ) : (
+                      '🏦 Release USDC to Wallet'
+                    )}
+                  </button>
+                  {releaseError && (
+                    <div style={{ marginTop: '8px', padding: '8px 10px', background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.2)', borderRadius: '8px', fontSize: '11px', color: '#f87171', textAlign: 'left', lineHeight: '1.4' }}>
+                      ✕ {releaseError}
+                    </div>
+                  )}
+                  {releaseSuccessTx && (
+                    <div style={{ marginTop: '8px', padding: '8px 10px', background: 'rgba(34, 197, 94, 0.08)', border: '1px solid rgba(34, 197, 94, 0.2)', borderRadius: '8px', fontSize: '11px', color: '#4ade80', textAlign: 'left', lineHeight: '1.4' }}>
+                      ✓ USDC released successfully!
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Close Button */}
               <button 
                 className="send-btn" 
-                onClick={() => setSelectedLog(null)} 
+                onClick={() => {
+                  setSelectedLog(null);
+                  setReleasingLogId(null);
+                  setReleaseError(null);
+                  setReleaseSuccessTx(null);
+                }} 
                 style={{ 
                   width: '100%', 
                   padding: '14px', 
