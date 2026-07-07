@@ -1065,8 +1065,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
   useEffect(() => {
     if (mode === 'sell') {
       const available = selectableTokens.some(t => t.symbol === selectedToken.symbol || t.mint === selectedToken.mint);
-      // We allow the selectedToken to remain in Sell mode if it is USDC, USDT, USDG, or any available custom token
-      const isLiveToken = selectedToken.symbol === 'USDC' || selectedToken.symbol === 'USDT' || selectedToken.symbol === 'USDG' || available;
+      const isLiveToken = selectedToken.symbol === 'USDC' || selectedToken.symbol === 'USDT' || selectedToken.symbol === 'USDG';
       if ((!available || !isLiveToken) && selectableTokens.length > 0) {
         const usdc = selectableTokens.find(t => t.symbol === 'USDC') || selectableTokens[0];
         setSelectedToken(usdc);
@@ -1796,41 +1795,17 @@ export default function P2PPanel({ connected, walletTokenList }) {
         throw new Error(`Insufficient ${liveSelectedToken.symbol} balance. You have ${balance.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${liveSelectedToken.symbol} but need ${estCryptoAmount.toFixed(4)} ${liveSelectedToken.symbol}.`);
       }
 
-      const isStable = liveSelectedToken.symbol === 'USDC' || liveSelectedToken.symbol === 'USDT' || liveSelectedToken.symbol === 'USDG';
-      const isNativePaj = isStable || liveSelectedToken.symbol === 'SOL' || liveSelectedToken.symbol === 'JUP' || liveSelectedToken.symbol === 'Bonk';
-
-      let targetMint = liveSelectedToken.mint;
-      let finalEstCrypto = estCryptoAmount;
-
-      if (!isNativePaj) {
-        // Step 1: Swap custom token to USDC first (gasless relayer swap)
-        await triggerJupiterSellSwap();
-        
-        // Swapped successfully! Now we offramp USDC to PajCash
-        targetMint = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'; // USDC mint
-        
-        // Fetch quote for USDC output
-        const quote = await getQuote({
-          inputMint: liveSelectedToken.mint,
-          outputMint: targetMint,
-          amount: Math.floor(estCryptoAmount * Math.pow(10, liveSelectedToken.decimals)),
-          slippageBps: 150
-        });
-        if (!quote) throw new Error("Could not retrieve quote for final USDC transfer.");
-        finalEstCrypto = Number(quote.outAmount) / 1_000_000;
-      }
-
       const bankObj = apiBanks.find(b => (b.name || b.bank_name || b) === selectedBank);
       const bankId = bankObj ? (bankObj.id || bankObj.code || bankObj.name) : selectedBank;
 
-      // 2. Create paj_ramp off-ramp order
+      // 1. Create paj_ramp off-ramp order
       const order = await createOfframpOrder(
         {
           bank: bankId,
           accountNumber: accountNumber.trim(),
           currency: selectedCountry.currency,
           fiatAmount: parsedAmt,
-          mint: targetMint,
+          mint: liveSelectedToken.mint,
           chain: 'SOLANA',
           fee: platformFee,
           webhookURL: import.meta.env.VITE_PAJCASH_WEBHOOK_URL || undefined,
@@ -1840,7 +1815,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
       if (!order?.address) throw new Error('PajCash did not return a deposit address for this order.');
 
-      // 3. Check if server-side relayer is configured
+      // 2. Check if server-side relayer is configured
       const relayerPubkeyStr = import.meta.env.VITE_RELAYER_PUBLIC_KEY;
       let relayerPublicKey = null;
       let usingRelayer = false;
@@ -1854,7 +1829,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
         }
       }
 
-      // 4. Build on-chain Solana transaction
+      // 3. Build on-chain Solana transaction
       const { blockhash } = await connection.getLatestBlockhash('confirmed');
       const transaction = new Transaction();
       transaction.feePayer = usingRelayer ? relayerPublicKey : publicKey;
@@ -1862,15 +1837,13 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
       const depositPubkey = new PublicKey(order.address);
 
-      const isSol = targetMint === 'So11111111111111111111111111111111111111112';
-
-      if (isSol) {
-        const lamports = Math.round((order.amount || finalEstCrypto) * 1e9);
+      if (liveSelectedToken.symbol === 'SOL') {
+        const lamports = Math.round((order.amount || estCryptoAmount) * 1e9);
         transaction.add(
           SystemProgram.transfer({ fromPubkey: publicKey, toPubkey: depositPubkey, lamports })
         );
       } else {
-        const mintPubkey = new PublicKey(targetMint);
+        const mintPubkey = new PublicKey(liveSelectedToken.mint);
         let tokenProgram = TOKEN_PROGRAM_ID;
         try {
           const mintAcct = await connection.getAccountInfo(mintPubkey);
@@ -1884,7 +1857,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
         const mintInfo = await connection.getParsedAccountInfo(mintPubkey);
         if (!mintInfo.value) throw new Error('Invalid token mint — could not fetch decimals.');
         const decimals = mintInfo.value.data.parsed.info.decimals;
-        const sendAmount = order.amount || finalEstCrypto;
+        const sendAmount = order.amount || estCryptoAmount;
         const units = BigInt(Math.round(sendAmount * Math.pow(10, decimals)));
 
         transaction.add(
@@ -1899,7 +1872,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
         );
       }
 
-      // 5. Attach on-chain memo with order ID
+      // 4. Attach on-chain memo with order ID
       transaction.add(
         new TransactionInstruction({
           keys: [],
@@ -1908,13 +1881,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
         })
       );
 
-      verifyOfframpTransaction(
-        transaction,
-        order.address,
-        !isNativePaj ? { symbol: 'USDC', mint: targetMint } : liveSelectedToken,
-        publicKey,
-        usingRelayer ? relayerPublicKey : null
-      );
+      verifyOfframpTransaction(transaction, order.address, liveSelectedToken, publicKey,
+        usingRelayer ? relayerPublicKey : null);
 
       // 5. Pre-flight simulation
       const sim = await connection.simulateTransaction(transaction);
@@ -2767,97 +2735,35 @@ export default function P2PPanel({ connected, walletTokenList }) {
                     </div>
 
                     {tokenOpen && (
-                      <div className="drop-menu" style={{ right: 0, minWidth: '240px', maxHeight: '300px', overflowY: 'auto', zIndex: 100 }}>
-                        <input
-                          type="text"
-                          placeholder="Search ticker or address..."
-                          value={tokenSearchQuery}
-                          onChange={(e) => setTokenSearchQuery(e.target.value)}
-                          onClick={(e) => e.stopPropagation()}
-                          style={{
-                            width: 'calc(100% - 16px)',
-                            margin: '8px',
-                            padding: '6px 10px',
-                            background: 'rgba(255, 255, 255, 0.05)',
-                            border: '1px solid rgba(255, 255, 255, 0.1)',
-                            borderRadius: '12px',
-                            color: 'white',
-                            fontSize: '12px',
-                            outline: 'none',
-                          }}
-                          autoFocus
-                        />
-                        {searchingTokens ? (
-                          <div style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'rgba(255,255,255,0.5)' }}>Searching...</div>
-                        ) : tokenSearchQuery.trim() !== '' ? (
-                          tokenSearchResults.length === 0 ? (
-                            <div style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: 'rgba(255,255,255,0.5)' }}>No tokens found</div>
-                          ) : (
-                            tokenSearchResults.map(t => (
-                              <div
-                                key={t.mint || t.symbol}
-                                className={`drop-item ${liveSelectedToken.symbol === t.symbol ? 'sel' : ''}`}
-                                onClick={() => {
-                                  setSelectedToken(t);
-                                  setTokenOpen(false);
-                                  setTokenSearchQuery('');
-                                }}
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '8px',
-                                  padding: '10px 12px',
-                                  cursor: 'pointer',
-                                }}
-                              >
-                                {t.logoURI ? (
-                                  <img src={t.logoURI} alt={t.symbol} style={{ width: '20px', height: '20px', borderRadius: '50%' }} />
-                                ) : (
-                                  <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(255,255,255,0.1)', color: 'white', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>
-                                    {t.symbol.slice(0, 2)}
-                                  </div>
-                                )}
-                                <span className="di-code" style={{ marginLeft: 0 }}>{t.symbol}</span>
-                                <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.3)', marginLeft: 'auto', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '80px' }}>
-                                  {t.mint.slice(0, 4)}...{t.mint.slice(-4)}
-                                </span>
-                              </div>
-                            ))
-                          )
-                        ) : (
-                          // Default view: only show stablecoins (USDC, USDT, USDG) and hide their quantities (balances)
-                          selectableTokens.filter(t => t.symbol === 'USDC' || t.symbol === 'USDT' || t.symbol === 'USDG').map(t => {
-                            const isLiveToken = t.symbol === 'USDC' || t.symbol === 'USDT' || t.symbol === 'USDG';
-                            return (
-                              <div
-                                key={t.mint || t.symbol}
-                                className={`drop-item ${liveSelectedToken.symbol === t.symbol ? 'sel' : ''}`}
-                                onClick={() => {
-                                  if (!isLiveToken) return;
-                                  setSelectedToken(t);
-                                  setTokenOpen(false);
-                                }}
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '8px',
-                                  padding: '10px 12px',
-                                  opacity: isLiveToken ? 1 : 0.55,
-                                  cursor: isLiveToken ? 'pointer' : 'not-allowed',
-                                }}
-                              >
-                                {t.logoURI ? (
-                                  <img src={t.logoURI} alt={t.symbol} style={{ width: '20px', height: '20px', borderRadius: '50%' }} />
-                                ) : (
-                                  <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(255,255,255,0.1)', color: 'white', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>
-                                    {t.symbol.slice(0, 2)}
-                                  </div>
-                                )}
-                                <span className="di-code" style={{ marginLeft: 0 }}>{t.symbol}</span>
-                              </div>
-                            );
-                          })
-                        )}
+                      <div className="drop-menu" style={{ right: 0, minWidth: '220px', zIndex: 100 }}>
+                        {selectableTokens.filter(t => t.symbol === 'USDC' || t.symbol === 'USDT' || t.symbol === 'USDG').map(t => {
+                          const isLiveToken = t.symbol === 'USDC' || t.symbol === 'USDT' || t.symbol === 'USDG';
+                          return (
+                            <div
+                              key={t.mint || t.symbol}
+                              className={`drop-item ${liveSelectedToken.symbol === t.symbol ? 'sel' : ''}`}
+                              onClick={() => {
+                                if (!isLiveToken) return; // block non-stables
+                                setSelectedToken(t);
+                                setTokenOpen(false);
+                              }}
+                              style={{
+                                display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 12px',
+                                opacity: isLiveToken ? 1 : 0.55,
+                                cursor: isLiveToken ? 'pointer' : 'not-allowed',
+                              }}
+                            >
+                              {t.logoURI ? (
+                                <img src={t.logoURI} alt={t.symbol} style={{ width: '20px', height: '20px', borderRadius: '50%' }} />
+                              ) : (
+                                <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(255,255,255,0.1)', color: 'white', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>
+                                  {t.symbol.slice(0, 2)}
+                                </div>
+                              )}
+                              <span className="di-code" style={{ marginLeft: 0 }}>{t.symbol}</span>
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
