@@ -359,6 +359,9 @@ export default function P2PPanel({ connected, walletTokenList }) {
   // True net USDC from PajCash (after their fees) — fetched live via getOnrampValue().
   // null = not yet fetched / fetching in progress.
   const [pajcashNetUsdc, setPajcashNetUsdc] = useState(null);
+  // PajCash's own exchange rate returned alongside the quote — used for precise
+  // fee conversion so the round-trip NGN → USDC → NGN is exact (no rounding gap).
+  const [pajcashOnrampRate, setPajcashOnrampRate] = useState(null);
 
   // ── QR Scanner Refs ──────────────────────────────────────────────────────
   const [scannerActive, setScannerActive] = useState(false);
@@ -705,12 +708,17 @@ export default function P2PPanel({ connected, walletTokenList }) {
     const timer = setTimeout(async () => {
       try {
         const result = await getOnrampValue({ currency: 'NGN', amount: fiatAmt }, sessionToken);
-        // PajCash returns: { value: number } or { usdcValue: number } — handle both shapes
+        // PajCash returns: { value: number, rate: number } or similar shapes — handle all
         const netUsdc = result?.value ?? result?.usdcValue ?? result?.amount ?? null;
+        const rate = result?.rate ?? result?.tokenRate ?? null;
         if (typeof netUsdc === 'number' && netUsdc > 0) {
           setPajcashNetUsdc(netUsdc);
         } else {
           setPajcashNetUsdc(null); // fallback to naive estimate
+        }
+        // Store PajCash's exchange rate for precise fee USDC conversion
+        if (typeof rate === 'number' && rate > 0) {
+          setPajcashOnrampRate(rate);
         }
       } catch (e) {
         console.warn('getOnrampValue failed, using fallback estimate:', e.message);
@@ -1252,7 +1260,12 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const PLATFORM_FEE_NGN = 200; // ₦200 flat platform fee
   // Convert the ₦200 fee to its USDC equivalent so we can pass it to PajCash's
   // businessUSDCFee field. PajCash uses this to compute the exact naira uplift.
-  const platformFeeUsdc = onrampNgnRate > 0 ? PLATFORM_FEE_NGN / onrampNgnRate : 0;
+  // Use PajCash's own rate (captured from getOnrampValue) for the fee conversion.
+  // This eliminates the round-trip rounding gap: if PajCash uses rate R to convert
+  // our USDC fee back to NGN on the payment slip, and we used the same rate R to
+  // compute the USDC fee, the result is always exactly ₦200 — no fractions.
+  const feeRate = pajcashOnrampRate || onrampNgnRate;
+  const platformFeeUsdc = feeRate > 0 ? PLATFORM_FEE_NGN / feeRate : 0;
 
   const parsedOnrampAmtRaw = parseFloat(onrampAmount) || 0;
   const parsedOnrampAmt = onrampInputMode === 'crypto' ? parsedOnrampAmtRaw * onrampNgnRate : parsedOnrampAmtRaw;
