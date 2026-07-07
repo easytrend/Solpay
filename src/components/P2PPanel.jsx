@@ -326,6 +326,9 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const swapTriggeredRef = useRef(false); // guard: prevent double auto-swap trigger
   const [copiedOnrampAcct, setCopiedOnrampAcct] = useState(false);
   const [showOnrampTooltip, setShowOnrampTooltip] = useState(false);
+  // True net USDC from PajCash (after their fees) — fetched live via getOnrampValue().
+  // null = not yet fetched / fetching in progress.
+  const [pajcashNetUsdc, setPajcashNetUsdc] = useState(null);
 
   // ── QR Scanner Refs ──────────────────────────────────────────────────────
   const [scannerActive, setScannerActive] = useState(false);
@@ -647,6 +650,46 @@ export default function P2PPanel({ connected, walletTokenList }) {
       setJupiterQuote(null);
     }
   }, [mode, onrampAmount, selectedToken, pajRates]);
+
+  // ── Live PajCash Onramp Estimate (accounts for PajCash's own fees) ────────
+  // getOnrampValue() returns the EXACT net USDC PajCash will deposit after their
+  // internal processing fee — which is different from a simple (fiatAmount / rate) calc.
+  // We call it on every amount change (debounced 600ms) so the UI is always accurate.
+  useEffect(() => {
+    if (mode !== 'buy') { setPajcashNetUsdc(null); return; }
+
+    const onrampNgnRate = pajRates?.onRampRate?.rate || pajRates?.rate || 1500;
+    const parsedOnrampAmtRaw = parseFloat(onrampAmount) || 0;
+    const fiatAmt = onrampInputMode === 'crypto'
+      ? parsedOnrampAmtRaw * onrampNgnRate
+      : parsedOnrampAmtRaw;
+
+    if (fiatAmt <= 0 || !sessionToken) {
+      setPajcashNetUsdc(null);
+      return;
+    }
+
+    // Reset while loading so we show the fallback estimate instantly
+    setPajcashNetUsdc(null);
+
+    const timer = setTimeout(async () => {
+      try {
+        const result = await getOnrampValue({ currency: 'NGN', amount: fiatAmt }, sessionToken);
+        // PajCash returns: { value: number } or { usdcValue: number } — handle both shapes
+        const netUsdc = result?.value ?? result?.usdcValue ?? result?.amount ?? null;
+        if (typeof netUsdc === 'number' && netUsdc > 0) {
+          setPajcashNetUsdc(netUsdc);
+        } else {
+          setPajcashNetUsdc(null); // fallback to naive estimate
+        }
+      } catch (e) {
+        console.warn('getOnrampValue failed, using fallback estimate:', e.message);
+        setPajcashNetUsdc(null);
+      }
+    }, 600);
+
+    return () => clearTimeout(timer);
+  }, [mode, onrampAmount, onrampInputMode, sessionToken, pajRates]);
 
   // ── Load banks ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1179,7 +1222,11 @@ export default function P2PPanel({ connected, walletTokenList }) {
   // Platform fee is deducted from the USDC the user receives — the NGN they send never changes.
   // We pass this to PajCash as `fee` so they handle the deduction natively on their end.
   const onrampFee = PLATFORM_FEE_USD; // $0.10
-  const estOnrampCrypto = Math.max(0, grossOnrampCrypto - onrampFee);
+  // Use the live PajCash quote (pajcashNetUsdc) when available — it reflects PajCash's OWN fees.
+  // Then subtract our $0.10 on top. Fall back to the naive fiatAmount/rate estimate while loading.
+  const estOnrampCrypto = pajcashNetUsdc !== null
+    ? Math.max(0, pajcashNetUsdc - PLATFORM_FEE_USD)
+    : Math.max(0, grossOnrampCrypto - PLATFORM_FEE_USD);
 
   const displayOnrampAmount = useMemo(() => {
     if (parsedOnrampAmt <= 0) return 0;
@@ -1372,12 +1419,17 @@ export default function P2PPanel({ connected, walletTokenList }) {
     const onrampNgnRate = pajRates?.onRampRate?.rate || pajRates?.rate || 1500;
     const parsedOnrampAmtRaw = parseFloat(onrampAmount) || 0;
     const parsedOnrampAmt = onrampInputMode === 'crypto' ? parsedOnrampAmtRaw * onrampNgnRate : parsedOnrampAmtRaw;
-    // We deduct the $0.10 platform fee from the gross USDC before swapping.
-    // PajCash already deducted it on their side, so the wallet only receives (gross - 0.10) USDC.
-    // Using the net amount ensures the swap never fails with "insufficient funds".
-    const grossUsdcAmount = onrampInputMode === 'fiat' ? Math.max(0, parsedOnrampAmt / onrampNgnRate) : parsedOnrampAmtRaw;
+
+    // Priority: use pajcashNetUsdc from state (live API quote from PajCash that already accounts
+    // for PajCash's own processing fees). This is the most accurate value for the swap.
+    // Fallback to naive fiatAmount/rate if the live quote is not yet loaded.
     const SWAP_PLATFORM_FEE_USD = 0.10;
-    const netUsdcAmount = Math.max(0, grossUsdcAmount - SWAP_PLATFORM_FEE_USD);
+    const grossUsdcFallback = onrampInputMode === 'fiat'
+      ? Math.max(0, parsedOnrampAmt / onrampNgnRate)
+      : parsedOnrampAmtRaw;
+    const pajcashGross = pajcashNetUsdc !== null ? pajcashNetUsdc : grossUsdcFallback;
+    // Net amount = PajCash gross (after their fee) minus our $0.10 platform fee
+    const netUsdcAmount = Math.max(0, pajcashGross - SWAP_PLATFORM_FEE_USD);
     const amountLamports = Math.floor(netUsdcAmount * 1_000_000);
     
     if (amountLamports <= 0) {
@@ -1459,7 +1511,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
       }
       throw new Error(e.message || e);
     }
-  }, [publicKey, signTransaction, pajRates, onrampAmount, liveSelectedToken, connection]);
+  }, [publicKey, signTransaction, pajRates, onrampAmount, onrampInputMode, liveSelectedToken, connection, pajcashNetUsdc]);
 
   // ── Polling Fallback for Onramp Order Status ──────────────────────────────
   useEffect(() => {
