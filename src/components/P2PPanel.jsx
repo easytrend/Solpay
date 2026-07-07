@@ -1251,12 +1251,12 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const grossOnrampCrypto = onrampInputMode === 'fiat' ? (onrampNgnRate > 0 ? parsedOnrampAmt / onrampNgnRate : 0) : parsedOnrampAmtRaw;
   // Platform fee is deducted from the USDC the user receives — the NGN they send never changes.
   // We pass this to PajCash as `fee` so they handle the deduction natively on their end.
-  const onrampFee = PLATFORM_FEE_USD; // $0.10
+  const onrampFee = 0;
   // Use the live PajCash quote (pajcashNetUsdc) when available — it reflects PajCash's OWN fees.
-  // Then subtract our $0.10 on top. Fall back to the naive fiatAmount/rate estimate while loading.
+  // Fall back to the naive fiatAmount/rate estimate while loading.
   const estOnrampCrypto = pajcashNetUsdc !== null
-    ? Math.max(0, pajcashNetUsdc - PLATFORM_FEE_USD)
-    : Math.max(0, grossOnrampCrypto - PLATFORM_FEE_USD);
+    ? pajcashNetUsdc
+    : grossOnrampCrypto;
 
   const displayOnrampAmount = useMemo(() => {
     if (parsedOnrampAmt <= 0) return 0;
@@ -1373,7 +1373,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
         {
           currency: 'NGN',
           fiatAmount: parsedOnrampAmt,
-          recipient: recipientAddress,
+          recipient: publicKey.toBase58(),
           chain: 'SOLANA',
           // NOTE: Do NOT pass fee here. PajCash's `fee` param adds to the fiat the user
           // must transfer (making them pay MORE naira than they typed), not deducts from USDC.
@@ -1454,14 +1454,11 @@ export default function P2PPanel({ connected, walletTokenList }) {
     // Priority: use pajcashNetUsdc from state (live API quote from PajCash that already accounts
     // for PajCash's own processing fees). This is the most accurate value for the swap.
     // Fallback to naive fiatAmount/rate if the live quote is not yet loaded.
-    const SWAP_PLATFORM_FEE_USD = 0.10;
     const grossUsdcFallback = onrampInputMode === 'fiat'
       ? Math.max(0, parsedOnrampAmt / onrampNgnRate)
       : parsedOnrampAmtRaw;
     const pajcashGross = pajcashNetUsdc !== null ? pajcashNetUsdc : grossUsdcFallback;
-    // Net amount = PajCash gross (after their fee) minus our $0.10 platform fee
-    const netUsdcAmount = Math.max(0, pajcashGross - SWAP_PLATFORM_FEE_USD);
-    const amountLamports = Math.floor(netUsdcAmount * 1_000_000);
+    const amountLamports = Math.floor(pajcashGross * 1_000_000);
     
     if (amountLamports <= 0) {
       throw new Error("Invalid USDC amount for swap.");
@@ -1552,7 +1549,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
     // Check if we are using the relayer intermediary for onramp fee deduction
     const relayerPubkeyStr = import.meta.env.VITE_RELAYER_PUBLIC_KEY;
-    const isRelayerActive = !!relayerPubkeyStr;
+    const isRelayerActive = false; // Disabled protocol fee intermediary forwarding
     let step = 'init';
 
     try {
@@ -3031,11 +3028,6 @@ export default function P2PPanel({ connected, walletTokenList }) {
                 <span style={{ color: 'rgba(255,255,255,0.38)' }}>
                   1 {liveSelectedToken.symbol} ≈ {selectedCountry.symbol}{displayOnrampRate.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
-                {onrampAmount && Number(onrampAmount) > 0 && (
-                  <span style={{ display: 'block', marginTop: '3px', color: '#f87171', fontWeight: '600', fontSize: '10.5px', letterSpacing: '0.01em' }}>
-                    −$0.10 platform fee
-                  </span>
-                )}
               </div>
             )}
           </div>
