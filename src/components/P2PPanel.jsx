@@ -1264,7 +1264,9 @@ export default function P2PPanel({ connected, walletTokenList }) {
   // This eliminates the round-trip rounding gap: if PajCash uses rate R to convert
   // our USDC fee back to NGN on the payment slip, and we used the same rate R to
   // compute the USDC fee, the result is always exactly ₦200 — no fractions.
-  const feeRate = pajcashOnrampRate || onrampNgnRate;
+  // We prioritize activeNgnRate (the offramp rate) because PajCash's backend
+  // values merchant USDC fees using their sell (offramp) rate.
+  const feeRate = activeNgnRate || pajcashOnrampRate || onrampNgnRate;
   const platformFeeUsdc = feeRate > 0 ? PLATFORM_FEE_NGN / feeRate : 0;
 
   const parsedOnrampAmtRaw = parseFloat(onrampAmount) || 0;
@@ -1395,7 +1397,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
       const order = await createOnrampOrder(
         {
           currency: 'NGN',
-          fiatAmount: parsedOnrampAmt + PLATFORM_FEE_NGN, // ₦1,000 + ₦200 = ₦1,200 exact
+          fiatAmount: parsedOnrampAmt,
+
           recipient: publicKey.toBase58(),
           chain: 'SOLANA',
           fee: platformFeeUsdc, // USDC equivalent of ₦200 → routed to merchant account
@@ -3116,7 +3119,13 @@ export default function P2PPanel({ connected, walletTokenList }) {
                     Transfer Exactly
                   </div>
                   <div style={{ fontSize: '38px', fontWeight: '800', color: '#fcefdc', letterSpacing: '-0.02em', marginBottom: '4px', fontFamily: 'sans-serif' }}>
-                    ₦{(parsedOnrampAmt + PLATFORM_FEE_NGN).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                    {(() => {
+                      // PajCash dynamically embeds the exact total to pay in the accountName string
+                      // e.g. "Paj Inc.(Pay NGN 1,199.64)". We parse this to ensure 100% UI match.
+                      const match = (onrampOrder.accountName || '').match(/Pay NGN ([\d,.]+)/i);
+                      if (match) return `₦${match[1]}`;
+                      return `₦${(parsedOnrampAmt + PLATFORM_FEE_NGN).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+                    })()}
                   </div>
                   <div style={{ fontSize: '12px', color: '#8e9aa8' }}>
                     incl. ₦{PLATFORM_FEE_NGN} service fee
