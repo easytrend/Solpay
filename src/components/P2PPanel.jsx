@@ -1565,6 +1565,79 @@ export default function P2PPanel({ connected, walletTokenList }) {
     }
   }, [publicKey, signTransaction, pajRates, onrampAmount, onrampInputMode, liveSelectedToken, connection, pajcashNetUsdc]);
 
+  const triggerJupiterSellSwap = useCallback(async () => {
+    if (!publicKey || !signTransaction) {
+      throw new Error("Wallet not fully connected.");
+    }
+    
+    const amountLamports = Math.floor(estCryptoAmount * Math.pow(10, liveSelectedToken.decimals));
+    
+    if (amountLamports <= 0) {
+      throw new Error("Invalid token amount for swap.");
+    }
+
+    setSubmitting(true);
+    setP2pError(null);
+
+    let txSignature = null;
+    
+    try {
+      const freshQuote = await getQuote({
+        inputMint: liveSelectedToken.mint,
+        outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
+        amount: amountLamports,
+        slippageBps: 150
+      });
+
+      if (!freshQuote) {
+        throw new Error("Failed to retrieve quote from Jupiter.");
+      }
+
+      const relayerPayer = import.meta.env.VITE_RELAYER_PUBLIC_KEY || undefined;
+      const base64Tx = await buildSwapTransaction(freshQuote, publicKey.toBase58(), relayerPayer);
+      if (!base64Tx) {
+        throw new Error("Failed to construct swap transaction.");
+      }
+
+      const rawTx = Uint8Array.from(atob(base64Tx), c => c.charCodeAt(0));
+      const transaction = VersionedTransaction.deserialize(rawTx);
+      const signedTx = await signTransaction(transaction);
+
+      if (relayerPayer) {
+        const serialized = Buffer.from(
+          signedTx.serialize({ requireAllSignatures: false })
+        ).toString('base64');
+
+        const relayRes = await fetch('/api/relay_swap', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ serializedTransaction: serialized }),
+        });
+
+        if (!relayRes.ok) {
+          const errData = await relayRes.json().catch(() => ({}));
+          throw new Error(errData.error || `Swap Relay API failed: ${relayRes.status}`);
+        }
+        const { signature } = await relayRes.json();
+        txSignature = signature;
+      } else {
+        txSignature = await connection.sendRawTransaction(signedTx.serialize(), {
+          skipPreflight: false,
+          maxRetries: 3,
+        });
+      }
+
+      await connection.confirmTransaction(txSignature, 'confirmed');
+    } catch (e) {
+      console.error("Jupiter auto-swap execution failed:", e);
+      if (txSignature) {
+        console.warn("Swap tx was broadcast (", txSignature, ") — treating as success despite adapter error.");
+        return;
+      }
+      throw new Error(e.message || e);
+    }
+  }, [publicKey, signTransaction, liveSelectedToken, connection, estCryptoAmount]);
+
   // Helper to run forwarding (and optional auto-swap) when onramp is paid.
   // We guard this function with `swapTriggeredRef` so it only runs once total.
   const handleOrderCompleted = useCallback(async (orderId) => {
@@ -1723,17 +1796,41 @@ export default function P2PPanel({ connected, walletTokenList }) {
         throw new Error(`Insufficient ${liveSelectedToken.symbol} balance. You have ${balance.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${liveSelectedToken.symbol} but need ${estCryptoAmount.toFixed(4)} ${liveSelectedToken.symbol}.`);
       }
 
+      const isStable = liveSelectedToken.symbol === 'USDC' || liveSelectedToken.symbol === 'USDT' || liveSelectedToken.symbol === 'USDG';
+      const isNativePaj = isStable || liveSelectedToken.symbol === 'SOL' || liveSelectedToken.symbol === 'JUP' || liveSelectedToken.symbol === 'Bonk';
+
+      let targetMint = liveSelectedToken.mint;
+      let finalEstCrypto = estCryptoAmount;
+
+      if (!isNativePaj) {
+        // Step 1: Swap custom token to USDC first (gasless relayer swap)
+        await triggerJupiterSellSwap();
+        
+        // Swapped successfully! Now we offramp USDC to PajCash
+        targetMint = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'; // USDC mint
+        
+        // Fetch quote for USDC output
+        const quote = await getQuote({
+          inputMint: liveSelectedToken.mint,
+          outputMint: targetMint,
+          amount: Math.floor(estCryptoAmount * Math.pow(10, liveSelectedToken.decimals)),
+          slippageBps: 150
+        });
+        if (!quote) throw new Error("Could not retrieve quote for final USDC transfer.");
+        finalEstCrypto = Number(quote.outAmount) / 1_000_000;
+      }
+
       const bankObj = apiBanks.find(b => (b.name || b.bank_name || b) === selectedBank);
       const bankId = bankObj ? (bankObj.id || bankObj.code || bankObj.name) : selectedBank;
 
-      // 1. Create paj_ramp off-ramp order
+      // 2. Create paj_ramp off-ramp order
       const order = await createOfframpOrder(
         {
           bank: bankId,
           accountNumber: accountNumber.trim(),
           currency: selectedCountry.currency,
           fiatAmount: parsedAmt,
-          mint: liveSelectedToken.mint,
+          mint: targetMint,
           chain: 'SOLANA',
           fee: platformFee,
           webhookURL: import.meta.env.VITE_PAJCASH_WEBHOOK_URL || undefined,
@@ -1743,9 +1840,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
       if (!order?.address) throw new Error('PajCash did not return a deposit address for this order.');
 
-      // 2. Check if server-side relayer is configured
-      // VITE_RELAYER_PUBLIC_KEY is safe to expose — it's just a public key.
-      // The private key lives in RELAYER_SECRET_KEY on the server (api/relay.js).
+      // 3. Check if server-side relayer is configured
       const relayerPubkeyStr = import.meta.env.VITE_RELAYER_PUBLIC_KEY;
       let relayerPublicKey = null;
       let usingRelayer = false;
@@ -1759,22 +1854,23 @@ export default function P2PPanel({ connected, walletTokenList }) {
         }
       }
 
-      // 3. Build on-chain Solana transaction
+      // 4. Build on-chain Solana transaction
       const { blockhash } = await connection.getLatestBlockhash('confirmed');
       const transaction = new Transaction();
-      // If relayer is active, set it as feePayer → user's wallet shows 0 fees
       transaction.feePayer = usingRelayer ? relayerPublicKey : publicKey;
       transaction.recentBlockhash = blockhash;
 
       const depositPubkey = new PublicKey(order.address);
 
-      if (liveSelectedToken.symbol === 'SOL') {
-        const lamports = Math.round((order.amount || estCryptoAmount) * 1e9);
+      const isSol = targetMint === 'So11111111111111111111111111111111111111112';
+
+      if (isSol) {
+        const lamports = Math.round((order.amount || finalEstCrypto) * 1e9);
         transaction.add(
           SystemProgram.transfer({ fromPubkey: publicKey, toPubkey: depositPubkey, lamports })
         );
       } else {
-        const mintPubkey = new PublicKey(liveSelectedToken.mint);
+        const mintPubkey = new PublicKey(targetMint);
         let tokenProgram = TOKEN_PROGRAM_ID;
         try {
           const mintAcct = await connection.getAccountInfo(mintPubkey);
@@ -1788,12 +1884,11 @@ export default function P2PPanel({ connected, walletTokenList }) {
         const mintInfo = await connection.getParsedAccountInfo(mintPubkey);
         if (!mintInfo.value) throw new Error('Invalid token mint — could not fetch decimals.');
         const decimals = mintInfo.value.data.parsed.info.decimals;
-        const sendAmount = order.amount || estCryptoAmount;
+        const sendAmount = order.amount || finalEstCrypto;
         const units = BigInt(Math.round(sendAmount * Math.pow(10, decimals)));
 
         transaction.add(
           createAssociatedTokenAccountIdempotentInstruction(
-            // Relayer pays rent for ATA creation too (not user)
             usingRelayer ? relayerPublicKey : publicKey, receiverATA, depositPubkey, mintPubkey, tokenProgram
           )
         );
@@ -1804,7 +1899,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
         );
       }
 
-      // 4. Attach on-chain memo with order ID
+      // 5. Attach on-chain memo with order ID
       transaction.add(
         new TransactionInstruction({
           keys: [],
@@ -1813,8 +1908,13 @@ export default function P2PPanel({ connected, walletTokenList }) {
         })
       );
 
-      verifyOfframpTransaction(transaction, order.address, liveSelectedToken, publicKey,
-        usingRelayer ? relayerPublicKey : null);
+      verifyOfframpTransaction(
+        transaction,
+        order.address,
+        !isNativePaj ? { symbol: 'USDC', mint: targetMint } : liveSelectedToken,
+        publicKey,
+        usingRelayer ? relayerPublicKey : null
+      );
 
       // 5. Pre-flight simulation
       const sim = await connection.simulateTransaction(transaction);
