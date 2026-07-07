@@ -107,19 +107,41 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Transaction feePayer does not match relayer' });
     }
 
-    // 2. Drain Check
-    // If the relayer is ONLY the fee payer, its index (0) should NEVER be referenced
-    // by ANY compiled instruction. If an instruction references it, it might be transferring SOL/tokens.
-    const isRelayerReferenced = transaction.message.compiledInstructions.some(ix => {
-      // accountKeyIndexes is an array of indices into the address tables mapping
-      for (let i = 0; i < ix.accountKeyIndexes.length; i++) {
-        if (ix.accountKeyIndexes[i] === 0) return true;
+    // 2. Drain Check (Smart)
+    // We allow the relayer to be referenced in instructions for legitimate purposes:
+    //   - ComputeBudget instructions (0x03... prefix) — never move funds
+    //   - ATA creation (Associated Token Program) — relayer is rent funder, not a drain
+    // We BLOCK only if the relayer appears as the 'from' account (index 0 of accountKeyIndexes)
+    // in a SystemProgram.transfer instruction (program ID = 11111...111), which would be an
+    // actual SOL drain.
+    const SYSTEM_PROGRAM_ID = '11111111111111111111111111111111';
+    const staticKeys = transaction.message.staticAccountKeys;
+
+    const isDrainAttempt = transaction.message.compiledInstructions.some(ix => {
+      // Get the program ID for this instruction
+      const programKey = staticKeys[ix.programIdIndex];
+      if (!programKey) return false;
+      const programId = programKey.toBase58();
+
+      // Only SystemProgram can transfer native SOL
+      if (programId !== SYSTEM_PROGRAM_ID) return false;
+
+      // SystemProgram.transfer instruction: discriminator is [2, 0, 0, 0] (u32 LE)
+      // The 'from' account is at accountKeyIndexes[0].
+      // If relayer (index 0 in staticKeys) is the 'from' account, it's a drain.
+      if (ix.data && ix.data.length >= 4) {
+        const discriminator = ix.data[0] | (ix.data[1] << 8) | (ix.data[2] << 16) | (ix.data[3] << 24);
+        const TRANSFER_DISCRIMINATOR = 2; // SystemProgram::transfer
+        if (discriminator === TRANSFER_DISCRIMINATOR) {
+          // ix.accountKeyIndexes[0] is the 'from' address for a transfer
+          if (ix.accountKeyIndexes[0] === 0) return true; // relayer is being drained!
+        }
       }
       return false;
     });
 
-    if (isRelayerReferenced) {
-      return res.status(400).json({ error: 'Blocked: Relayer public key is referenced inside an instruction. Relayer can only be used as feePayer.' });
+    if (isDrainAttempt) {
+      return res.status(400).json({ error: 'Blocked: Transaction attempts to transfer SOL from relayer wallet.' });
     }
 
     // 3. Balance Check
