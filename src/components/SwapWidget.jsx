@@ -168,6 +168,11 @@ function TokenPicker({ selected, options, onChange, excludeMint, id, onAddCustom
   const [search, setSearch] = useState('');
   const wrapRef = useRef(null);
 
+  // Jupiter full-universe search state (mirrors onramp pattern)
+  const [jupSearchResults, setJupSearchResults] = useState([]);
+  const [jupSearching, setJupSearching] = useState(false);
+
+  // CA-lookup state (fallback for tokens not indexed by Jupiter)
   const [loadingMetadata, setLoadingMetadata] = useState(false);
   const [resolvedToken, setResolvedToken] = useState(null);
 
@@ -179,52 +184,91 @@ function TokenPicker({ selected, options, onChange, excludeMint, id, onAddCustom
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
-  // Lookup custom token if search is a mint address
+  // ── Jupiter token search (ticker OR CA) ──────────────────────────────────
+  // Mirrors the onramp search: hits lite-api.jup.ag/tokens/v2/search for any
+  // query ≥ 2 chars. CA lookups also fall through to fetchTokenMetadata below.
   useEffect(() => {
-    const mint = search.trim();
-    const isMintAddress = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint);
-    if (!isMintAddress) {
-      setResolvedToken(null);
-      return;
-    }
-
-    const exists = options.some(t => t.mint.toLowerCase() === mint.toLowerCase());
-    if (exists) {
-      setResolvedToken(null);
+    const q = search.trim();
+    if (q.length < 2) {
+      setJupSearchResults([]);
+      setJupSearching(false);
       return;
     }
 
     let active = true;
-    const lookup = async () => {
+    const timer = setTimeout(async () => {
+      setJupSearching(true);
+      try {
+        const res = await fetch(`https://lite-api.jup.ag/tokens/v2/search?query=${encodeURIComponent(q)}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (active) {
+          setJupSearchResults(
+            (Array.isArray(data) ? data : [])
+              .filter(t => t.id && t.id !== excludeMint)
+              .map(t => ({
+                symbol: (t.symbol || '').toUpperCase(),
+                name: t.name || t.symbol,
+                mint: t.id,
+                logoURI: t.icon || '',
+                decimals: typeof t.decimals === 'number' ? t.decimals : 6,
+                balance: 0,
+              }))
+          );
+        }
+      } catch {
+        if (active) setJupSearchResults([]);
+      } finally {
+        if (active) setJupSearching(false);
+      }
+    }, 400);
+
+    return () => { active = false; clearTimeout(timer); };
+  }, [search, excludeMint]);
+
+  // ── CA-only fallback: fetch metadata from DEX Screener / on-chain ──────────
+  // Only runs when the query looks like a Solana base58 mint address AND Jupiter
+  // didn't return it already.
+  useEffect(() => {
+    const mint = search.trim();
+    const isMintAddress = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint);
+    if (!isMintAddress) { setResolvedToken(null); return; }
+
+    // If Jupiter already found it, no need for the extra RPC lookup
+    const alreadyFound =
+      options.some(t => t.mint.toLowerCase() === mint.toLowerCase()) ||
+      jupSearchResults.some(t => t.mint.toLowerCase() === mint.toLowerCase());
+    if (alreadyFound) { setResolvedToken(null); return; }
+
+    let active = true;
+    const timer = setTimeout(async () => {
       setLoadingMetadata(true);
       setResolvedToken(null);
       try {
         const token = await fetchTokenMetadata(mint, connection);
-        if (active && token) {
-          setResolvedToken(token);
-        }
-      } catch (err) {
-        
+        if (active && token) setResolvedToken(token);
       } finally {
         if (active) setLoadingMetadata(false);
       }
-    };
-
-    const t = setTimeout(() => {
-      lookup();
     }, 500);
 
-    return () => {
-      active = false;
-      clearTimeout(t);
-    };
-  }, [search, options, connection]);
+    return () => { active = false; clearTimeout(timer); };
+  }, [search, options, jupSearchResults, connection]);
 
-  const filtered = options.filter(t =>
+  // Wallet-local filter (shown when search is empty or matches wallet tokens)
+  const localFiltered = options.filter(t =>
     t.mint !== excludeMint &&
-    (t.symbol.toLowerCase().includes(search.toLowerCase()) ||
-     t.name.toLowerCase().includes(search.toLowerCase()))
+    (search.trim() === '' ||
+      t.symbol.toLowerCase().includes(search.toLowerCase()) ||
+      t.name.toLowerCase().includes(search.toLowerCase()))
   );
+
+  // When there's a query, show Jupiter results instead of (or in addition to) local
+  const showingSearch = search.trim().length >= 2;
+
+  // Deduplicate Jupiter results against already-shown local wallet tokens
+  const localMints = new Set(localFiltered.map(t => t.mint));
+  const jupExtra = jupSearchResults.filter(t => !localMints.has(t.mint));
 
   return (
     <div className="swp-picker-wrap" ref={wrapRef}>
@@ -243,12 +287,14 @@ function TokenPicker({ selected, options, onChange, excludeMint, id, onAddCustom
         <div className="swp-dropdown">
           <input
             className="swp-dropdown-search"
-            placeholder="Search name or address…"
+            placeholder="Search ticker, name or paste CA…"
             value={search}
             onChange={e => setSearch(e.target.value)}
             autoFocus
           />
-          {filtered.map(t => (
+
+          {/* ── Wallet tokens (always shown; filtered when searching) ── */}
+          {localFiltered.map(t => (
             <button
               key={t.mint}
               className={`swp-dropdown-item ${selected?.mint === t.mint ? 'sel' : ''}`}
@@ -258,10 +304,52 @@ function TokenPicker({ selected, options, onChange, excludeMint, id, onAddCustom
               <TokenIcon token={t} size={22} />
               <span className="swp-di-sym">{t.symbol}</span>
               <span className="swp-di-name">{t.name}</span>
+              {t.balance > 0 && (
+                <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)', fontVariantNumeric: 'tabular-nums' }}>
+                  {t.balance < 0.0001 ? t.balance.toExponential(2) : t.balance.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                </span>
+              )}
             </button>
           ))}
 
-          {/* Render dynamically looked up token if found */}
+          {/* ── Jupiter universe results (extra tokens not in wallet) ── */}
+          {showingSearch && jupExtra.length > 0 && (
+            <>
+              <div style={{
+                padding: '4px 14px 2px',
+                fontSize: 10,
+                color: 'var(--text3)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.08em',
+                borderTop: localFiltered.length > 0 ? '1px solid rgba(255,255,255,0.06)' : 'none',
+                marginTop: localFiltered.length > 0 ? 4 : 0,
+              }}>
+                All tokens
+              </div>
+              {jupExtra.map(t => (
+                <button
+                  key={t.mint}
+                  className={`swp-dropdown-item ${selected?.mint === t.mint ? 'sel' : ''}`}
+                  type="button"
+                  style={{ background: 'rgba(34,211,238,0.03)' }}
+                  onClick={() => {
+                    if (onAddCustomToken) onAddCustomToken(t);
+                    onChange(t);
+                    setOpen(false);
+                    setSearch('');
+                  }}
+                >
+                  <TokenIcon token={t} size={22} />
+                  <div style={{ display: 'flex', flexDirection: 'column', textAlign: 'left' }}>
+                    <span className="swp-di-sym">{t.symbol} <span style={{ fontSize: 9, color: 'var(--cyan)' }}>(Import)</span></span>
+                    <span className="swp-di-name" style={{ fontSize: 10 }}>{t.name}</span>
+                  </div>
+                </button>
+              ))}
+            </>
+          )}
+
+          {/* ── DEX Screener / on-chain CA fallback ── */}
           {resolvedToken && (
             <button
               className="swp-dropdown-item custom-import-item"
@@ -282,15 +370,18 @@ function TokenPicker({ selected, options, onChange, excludeMint, id, onAddCustom
             </button>
           )}
 
-          {/* Loading / Empty states */}
-          {loadingMetadata && (
+          {/* Loading state */}
+          {(jupSearching || loadingMetadata) && (
             <div style={{ padding: '12px 14px', color: 'var(--text3)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
               <span className="swp-mini-spin" /> Searching…
             </div>
           )}
 
-          {filtered.length === 0 && !loadingMetadata && !resolvedToken && (
-            <div style={{ padding: '12px 14px', color: 'var(--text3)', fontSize: 12 }}>No tokens found</div>
+          {/* Empty state */}
+          {localFiltered.length === 0 && jupExtra.length === 0 && !jupSearching && !loadingMetadata && !resolvedToken && (
+            <div style={{ padding: '12px 14px', color: 'var(--text3)', fontSize: 12 }}>
+              {showingSearch ? 'No tokens found' : 'No tokens in wallet'}
+            </div>
           )}
         </div>
       )}
