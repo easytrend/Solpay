@@ -70,6 +70,16 @@ const DEFAULT_TOKENS = [
     balance: 0,
   },
   {
+    symbol: 'USDG',
+    name: 'Global Dollar',
+    // Token-2022 mint — must always use TOKEN_2022_PROGRAM_ID
+    mint: '2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH',
+    logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH/logo.png',
+    decimals: 6,
+    balance: 0,
+    tokenProgramOverride: 'token2022', // sentinel: always use Token-2022 program
+  },
+  {
     symbol: 'SOL',
     name: 'Solana',
     mint: 'So11111111111111111111111111111111111111112',
@@ -1844,19 +1854,40 @@ export default function P2PPanel({ connected, walletTokenList }) {
         );
       } else {
         const mintPubkey = new PublicKey(liveSelectedToken.mint);
+
+        // Determine the correct SPL token program.
+        // USDG uses Token-2022; we honour the override flag first so we
+        // never send the wrong program even if the RPC call fails.
         let tokenProgram = TOKEN_PROGRAM_ID;
-        try {
-          const mintAcct = await connection.getAccountInfo(mintPubkey);
-          if (mintAcct?.owner.equals(TOKEN_2022_PROGRAM_ID)) tokenProgram = TOKEN_2022_PROGRAM_ID;
-        } catch { /* use default */ }
+        if (liveSelectedToken.tokenProgramOverride === 'token2022') {
+          tokenProgram = TOKEN_2022_PROGRAM_ID;
+        } else {
+          try {
+            const mintAcct = await connection.getAccountInfo(mintPubkey);
+            if (mintAcct?.owner.equals(TOKEN_2022_PROGRAM_ID)) tokenProgram = TOKEN_2022_PROGRAM_ID;
+          } catch { /* fallback to legacy SPL */ }
+        }
 
         const senderATA = getAssociatedTokenAddressSync(mintPubkey, publicKey, false, tokenProgram);
         const receiverATA = getAssociatedTokenAddressSync(mintPubkey, depositPubkey, false, tokenProgram);
 
-        // Fetch decimals from chain
-        const mintInfo = await connection.getParsedAccountInfo(mintPubkey);
-        if (!mintInfo.value) throw new Error('Invalid token mint — could not fetch decimals.');
-        const decimals = mintInfo.value.data.parsed.info.decimals;
+        // Verify sender ATA exists and has sufficient balance before building tx
+        const senderATAInfo = await connection.getAccountInfo(senderATA);
+        if (!senderATAInfo) {
+          throw new Error(
+            `Your ${liveSelectedToken.symbol} token account has not been initialised on-chain. ` +
+            'Please receive a small amount first to create the account, then retry.'
+          );
+        }
+
+        // Fetch decimals — use known value first, fall back to chain
+        let decimals = typeof liveSelectedToken.decimals === 'number' ? liveSelectedToken.decimals : null;
+        if (decimals === null) {
+          const mintInfo = await connection.getParsedAccountInfo(mintPubkey);
+          if (!mintInfo.value) throw new Error('Invalid token mint — could not fetch decimals.');
+          decimals = mintInfo.value.data.parsed.info.decimals;
+        }
+
         const sendAmount = order.amount || estCryptoAmount;
         const units = BigInt(Math.round(sendAmount * Math.pow(10, decimals)));
 
