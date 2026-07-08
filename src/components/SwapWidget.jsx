@@ -48,14 +48,6 @@ const SLIPPAGE_PRESETS = [
 
 const TOKEN_COLORS = { SOL: '#9945FF', USDC: '#2775CA', USDT: '#26A17B', BONK: '#f5a623', JUP: '#C7F284', WIF: '#a78bfa' };
 
-const TRUSTED_HOSTS = ['raw.githubusercontent.com', 'assets.coingecko.com', 'tokens.jup.ag', 'arweave.net', 'nftstorage.link', 'cdn.jsdelivr.net', 'coin-images.coingecko.com', 'dd.dexscreener.com'];
-function isTrustedLogo(url) {
-  if (!url) return false;
-  try {
-    const p = new URL(url);
-    return p.protocol === 'https:' && TRUSTED_HOSTS.some(h => p.hostname === h || p.hostname.endsWith('.' + h));
-  } catch { return false; }
-}
 
 async function fetchTokenMetadata(mintAddress, connection) {
   // 1. Try CoinGecko
@@ -144,16 +136,17 @@ async function fetchTokenMetadata(mintAddress, connection) {
 /* ── Tiny reusable token icon ── */
 function TokenIcon({ token, size = 26 }) {
   const [err, setErr] = useState(false);
-  const validLogo = !err && isTrustedLogo(token?.logoURI);
+  // Accept any https logo — fall back to colored initials on load error
+  const hasLogo = !err && token?.logoURI && token.logoURI.startsWith('https://');
   return (
     <div style={{
       width: size, height: size, borderRadius: '50%',
-      background: validLogo ? 'transparent' : (TOKEN_COLORS[token?.symbol] || '#334'),
+      background: hasLogo ? 'transparent' : (TOKEN_COLORS[token?.symbol] || '#334'),
       overflow: 'hidden', flexShrink: 0,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       fontSize: size * 0.34, fontWeight: 700, color: '#fff',
     }}>
-      {validLogo
+      {hasLogo
         ? <img src={token.logoURI} alt={token.symbol} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={() => setErr(true)} />
         : (token?.symbol?.slice(0, 3) || '?')
       }
