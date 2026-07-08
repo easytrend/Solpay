@@ -69,16 +69,18 @@ const DEFAULT_TOKENS = [
     decimals: 6,
     balance: 0,
   },
-  {
-    symbol: 'USDG',
-    name: 'Global Dollar',
-    // Token-2022 mint — must always use TOKEN_2022_PROGRAM_ID
-    mint: '2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH',
-    logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH/logo.png',
-    decimals: 6,
-    balance: 0,
-    tokenProgramOverride: 'token2022', // sentinel: always use Token-2022 program
-  },
+  // NOTE: USDG (Token-2022) is temporarily disabled on offramp.
+  // PajCash backend is not completing fiat payouts for USDG deposits.
+  // Re-enable once PajCash confirms USDG support is working on their side.
+  // {
+  //   symbol: 'USDG',
+  //   name: 'Global Dollar',
+  //   mint: '2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH',
+  //   logoURI: '...',
+  //   decimals: 6,
+  //   balance: 0,
+  //   tokenProgramOverride: 'token2022',
+  // },
   {
     symbol: 'SOL',
     name: 'Solana',
@@ -1075,7 +1077,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
   useEffect(() => {
     if (mode === 'sell') {
       const available = selectableTokens.some(t => t.symbol === selectedToken.symbol || t.mint === selectedToken.mint);
-      const isLiveToken = selectedToken.symbol === 'USDC' || selectedToken.symbol === 'USDT' || selectedToken.symbol === 'USDG';
+      const isLiveToken = selectedToken.symbol === 'USDC' || selectedToken.symbol === 'USDT';
       if ((!available || !isLiveToken) && selectableTokens.length > 0) {
         const usdc = selectableTokens.find(t => t.symbol === 'USDC') || selectableTokens[0];
         setSelectedToken(usdc);
@@ -2767,8 +2769,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
                     {tokenOpen && (
                       <div className="drop-menu" style={{ right: 0, minWidth: '220px', zIndex: 100 }}>
-                        {selectableTokens.filter(t => t.symbol === 'USDC' || t.symbol === 'USDT' || t.symbol === 'USDG').map(t => {
-                          const isLiveToken = t.symbol === 'USDC' || t.symbol === 'USDT' || t.symbol === 'USDG';
+                        {selectableTokens.filter(t => t.symbol === 'USDC' || t.symbol === 'USDT').map(t => {
+                          const isLiveToken = t.symbol === 'USDC' || t.symbol === 'USDT';
                           return (
                             <div
                               key={t.mint || t.symbol}
