@@ -363,6 +363,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const [onrampLoading, setOnrampLoading] = useState(false);
   const [onrampError, setOnrampError] = useState(null);
   const [onrampStatus, setOnrampStatus] = useState(null); // 'pending'|'processing'|'completed'|'failed'
+  const [showOnrampSuccess, setShowOnrampSuccess] = useState(false);
+  const [onrampSuccessDetails, setOnrampSuccessDetails] = useState(null);
   const onrampSocketRef = useRef(null);
   const offrampSocketRef = useRef(null);
   const swapTriggeredRef = useRef(false); // guard: prevent double auto-swap trigger
@@ -1559,9 +1561,23 @@ export default function P2PPanel({ connected, walletTokenList }) {
       await connection.confirmTransaction(txSignature, 'confirmed');
       // Swap fully confirmed — clear any stale error and mark complete
       setOnrampError(null);
+      setOnrampSuccessDetails({
+        symbol: liveSelectedToken.symbol,
+        logoURI: liveSelectedToken.logoURI || '',
+        nairaAmount: parsedOnrampAmt,
+        cryptoAmount: displayOnrampAmount,
+      });
+      setShowOnrampSuccess(true);
       setOnrampStatus('completed');
     } catch (e) {
       console.error("Jupiter auto-swap execution failed:", e);
+      setOnrampSuccessDetails({
+        symbol: liveSelectedToken.symbol,
+        logoURI: liveSelectedToken.logoURI || '',
+        nairaAmount: parsedOnrampAmt,
+        cryptoAmount: displayOnrampAmount,
+      });
+      setShowOnrampSuccess(true);
       setOnrampStatus('completed');
       // If we already sent the transaction (txSignature obtained), it may have
       // confirmed on-chain even if the wallet adapter threw a post-sign error.
@@ -1684,6 +1700,13 @@ export default function P2PPanel({ connected, walletTokenList }) {
         setOnrampStatus('swapping');
         await triggerJupiterSwap();
       } else {
+        setOnrampSuccessDetails({
+          symbol: liveSelectedToken.symbol,
+          logoURI: liveSelectedToken.logoURI || '',
+          nairaAmount: parsedOnrampAmt,
+          cryptoAmount: displayOnrampAmount,
+        });
+        setShowOnrampSuccess(true);
         setOnrampStatus('completed');
       }
     } catch (err) {
@@ -3900,6 +3923,129 @@ export default function P2PPanel({ connected, walletTokenList }) {
               Cancel
             </button>
             <style>{`@keyframes p2pScanLine { 0% { top:0% } 50% { top:100% } 100% { top:0% } }`}</style>
+          </div>
+        </div>
+      )}
+
+      {/* ── Onramp Transaction Confirmed Popup ──────────────────────────────── */}
+      {showOnrampSuccess && onrampSuccessDetails && (
+        <div
+          onClick={() => setShowOnrampSuccess(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 9999,
+            background: 'rgba(0,0,0,0.75)',
+            backdropFilter: 'blur(6px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            animation: 'fadeInBackdrop 0.25s ease',
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: 'linear-gradient(160deg, #0d1f14 0%, #0a1a0a 60%, #101c15 100%)',
+              border: '1px solid rgba(132,204,22,0.35)',
+              borderRadius: '24px',
+              padding: '36px 28px 28px',
+              width: '320px',
+              maxWidth: '90vw',
+              textAlign: 'center',
+              position: 'relative',
+              boxShadow: '0 0 60px rgba(132,204,22,0.18), 0 24px 48px rgba(0,0,0,0.6)',
+              animation: 'slideUpCard 0.35s cubic-bezier(0.34,1.56,0.64,1)',
+            }}
+          >
+            {/* Animated ring + checkmark */}
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '20px' }}>
+              <div style={{
+                position: 'relative', width: '72px', height: '72px',
+                borderRadius: '50%',
+                background: 'radial-gradient(circle, rgba(132,204,22,0.15) 0%, transparent 70%)',
+                border: '2px solid rgba(132,204,22,0.5)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                animation: 'pulseRing 2s ease infinite',
+              }}>
+                <span style={{ fontSize: '32px', lineHeight: 1 }}>✅</span>
+              </div>
+            </div>
+
+            {/* Title */}
+            <div style={{ fontSize: '18px', fontWeight: '800', color: '#f0fdf4', marginBottom: '6px', letterSpacing: '-0.02em' }}>
+              Transaction Confirmed!
+            </div>
+            <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.45)', marginBottom: '24px' }}>
+              Your crypto is on its way to your wallet
+            </div>
+
+            {/* Token badge */}
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px',
+              background: 'rgba(132,204,22,0.07)',
+              border: '1px solid rgba(132,204,22,0.18)',
+              borderRadius: '14px',
+              padding: '14px 20px',
+              marginBottom: '16px',
+            }}>
+              {onrampSuccessDetails.logoURI ? (
+                <img
+                  src={onrampSuccessDetails.logoURI}
+                  alt={onrampSuccessDetails.symbol}
+                  style={{ width: '36px', height: '36px', borderRadius: '50%', objectFit: 'cover' }}
+                  onError={e => { e.target.style.display = 'none'; }}
+                />
+              ) : (
+                <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(132,204,22,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', fontWeight: '700', color: '#84cc16' }}>
+                  {onrampSuccessDetails.symbol?.[0] || '?'}
+                </div>
+              )}
+              <div style={{ textAlign: 'left' }}>
+                <div style={{ fontSize: '20px', fontWeight: '800', color: '#84cc16', letterSpacing: '-0.01em' }}>
+                  {onrampSuccessDetails.cryptoAmount > 0
+                    ? `${onrampSuccessDetails.cryptoAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} ${onrampSuccessDetails.symbol}`
+                    : onrampSuccessDetails.symbol}
+                </div>
+                <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.45)', marginTop: '2px' }}>
+                  received in your wallet
+                </div>
+              </div>
+            </div>
+
+            {/* Naira paid row */}
+            <div style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              background: 'rgba(255,255,255,0.04)',
+              borderRadius: '10px',
+              padding: '10px 14px',
+              marginBottom: '22px',
+            }}>
+              <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.45)' }}>You paid</span>
+              <span style={{ fontSize: '14px', fontWeight: '700', color: '#f0fdf4' }}>
+                ₦{onrampSuccessDetails.nairaAmount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+              </span>
+            </div>
+
+            {/* Done button */}
+            <button
+              onClick={() => setShowOnrampSuccess(false)}
+              style={{
+                width: '100%', padding: '13px',
+                background: 'linear-gradient(135deg, #65a30d, #84cc16)',
+                border: 'none', borderRadius: '12px',
+                color: '#0d1f14', fontWeight: '800', fontSize: '15px',
+                cursor: 'pointer', letterSpacing: '0.02em',
+                boxShadow: '0 4px 16px rgba(132,204,22,0.3)',
+                transition: 'opacity 0.15s',
+              }}
+              onMouseEnter={e => e.target.style.opacity = '0.85'}
+              onMouseLeave={e => e.target.style.opacity = '1'}
+            >
+              Done 🎉
+            </button>
+
+            <style>{`
+              @keyframes fadeInBackdrop { from { opacity: 0 } to { opacity: 1 } }
+              @keyframes slideUpCard { from { opacity: 0; transform: translateY(40px) scale(0.95) } to { opacity: 1; transform: translateY(0) scale(1) } }
+              @keyframes pulseRing { 0%,100% { box-shadow: 0 0 0 0 rgba(132,204,22,0.3) } 50% { box-shadow: 0 0 0 10px rgba(132,204,22,0) } }
+            `}</style>
           </div>
         </div>
       )}
