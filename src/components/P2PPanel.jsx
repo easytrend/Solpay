@@ -3122,14 +3122,9 @@ export default function P2PPanel({ connected, walletTokenList }) {
                   1 {liveSelectedToken.symbol} ≈ {selectedCountry.symbol}{displayOnrampRate.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
                 {onrampAmount && Number(onrampAmount) > 0 && (
-                  <>
-                    <span style={{ display: 'block', marginTop: '3px', color: '#facc15', fontWeight: '600', fontSize: '10.5px', letterSpacing: '0.01em' }}>
-                      + ₦{PLATFORM_FEE_NGN.toLocaleString()} service fee added to your payment
-                    </span>
-                    <span style={{ display: 'block', marginTop: '2px', color: 'var(--lime)', fontSize: '10px', fontWeight: '600', letterSpacing: '0.01em' }}>
-                      * Final NGN may vary slightly to align with PajCash live conversion rates.
-                    </span>
-                  </>
+                  <span style={{ display: 'block', marginTop: '3px', color: 'rgba(255,255,255,0.4)', fontSize: '10.5px' }}>
+                    * 0.2 USDC service fee deducted from payout.
+                  </span>
                 )}
               </div>
             )}
@@ -3199,11 +3194,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
                       // e.g. "Paj Inc.(Pay NGN 1,199.64)". We parse this to ensure 100% UI match.
                       const match = (onrampOrder.accountName || '').match(/Pay NGN ([\d,.]+)/i);
                       if (match) return `₦${match[1]}`;
-                      return `₦${(parsedOnrampAmt + PLATFORM_FEE_NGN).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+                      return `₦${parsedOnrampAmt.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
                     })()}
-                  </div>
-                  <div style={{ fontSize: '12px', color: '#8e9aa8' }}>
-                    incl. ₦{PLATFORM_FEE_NGN} service fee
                   </div>
                   <div style={{
                     fontSize: '10px',
@@ -3328,7 +3320,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
               ) : parsedOnrampAmt > 0 ? (
                 <>
                   <span style={{ fontSize: '16px', fontWeight: '800', letterSpacing: '-0.3px' }}>
-                    Pay ₦{(parsedOnrampAmt + PLATFORM_FEE_NGN).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                    Pay ₦{parsedOnrampAmt.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                   </span>
                   <span style={{ fontSize: '11px', fontWeight: '500', opacity: 0.75 }}>
                     🏦 Get Bank Details →
