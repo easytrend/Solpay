@@ -1264,31 +1264,21 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const baseCryptoAmount = estCryptoAmount + platformFeeInToken;
   const fiatAmountText = parsedAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  // ── Onramp fee (₦200 flat — added ON TOP of buyer's Naira payment) ─────────
-  // PajCash receives (fiatAmount + ₦200), converts the ₦200 to USDC at the live
-  // rate, and deposits that USDC directly into the developer's merchant account.
-  // The buyer's USDC receipt is based on fiatAmount only — they get exactly what
-  // the quote shows; they just pay ₦200 extra on the Naira side.
-  const PLATFORM_FEE_NGN = 200; // ₦200 flat platform fee
-  // Convert the ₦200 fee to its USDC equivalent so we can pass it to PajCash's
-  // businessUSDCFee field. PajCash uses this to compute the exact naira uplift.
-  // Use PajCash's own rate (captured from getOnrampValue) for the fee conversion.
-  // This eliminates the round-trip rounding gap: if PajCash uses rate R to convert
-  // our USDC fee back to NGN on the payment slip, and we used the same rate R to
-  // compute the USDC fee, the result is always exactly ₦200 — no fractions.
-  // We prioritize activeNgnRate (the offramp rate) because PajCash's backend
-  // values merchant USDC fees using their sell (offramp) rate.
-  const feeRate = activeNgnRate || pajcashOnrampRate || onrampNgnRate;
-  const platformFeeUsdc = feeRate > 0 ? PLATFORM_FEE_NGN / feeRate : 0;
+  // ── Onramp fee (0.2 USDC flat — deducted from the buyer's crypto received) ─────────
+  // PajCash receives the exact fiatAmount the user input, converts it to USDC at the live
+  // rate, deducts 0.2 USDC, and deposits that 0.2 USDC directly into the developer's
+  // merchant account. The user receives the remaining USDC.
+  const platformFeeUsdc = 0.2;
 
   const parsedOnrampAmtRaw = parseFloat(onrampAmount) || 0;
   const parsedOnrampAmt = onrampInputMode === 'crypto' ? parsedOnrampAmtRaw * onrampNgnRate : parsedOnrampAmtRaw;
   const grossOnrampCrypto = onrampInputMode === 'fiat' ? (onrampNgnRate > 0 ? parsedOnrampAmt / onrampNgnRate : 0) : parsedOnrampAmtRaw;
-  // Use the live PajCash quote (pajcashNetUsdc) when available — it already
-  // reflects PajCash's own processing fee on the base fiatAmount.
+  
+  // Use the live PajCash quote (pajcashNetUsdc) when available — it reflects 
+  // PajCash's own processing fee. We then subtract our platform fee from that.
   const estOnrampCrypto = pajcashNetUsdc !== null
-    ? pajcashNetUsdc
-    : grossOnrampCrypto;
+    ? Math.max(0, pajcashNetUsdc - platformFeeUsdc)
+    : Math.max(0, grossOnrampCrypto - platformFeeUsdc);
 
   const displayOnrampAmount = useMemo(() => {
     if (parsedOnrampAmt <= 0) return 0;
@@ -1401,11 +1391,10 @@ export default function P2PPanel({ connected, walletTokenList }) {
         ? liveSelectedToken.mint
         : 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'; // Default to USDC mint
 
-      // We pass the FULL amount (base + ₦200 fee) as fiatAmount so PajCash
-      // generates a payment slip for exactly ₦1,200 — no USDC↔NGN rate
-      // conversion means no rounding gap. The fee param tells PajCash how
-      // much USDC to split off to the developer's merchant account from
-      // the received total.
+      // We pass the exact fiatAmount the user input.
+      // PajCash generates a payment slip for this exact amount.
+      // The fee param (0.2 USDC) tells PajCash how much USDC to split off 
+      // to the developer's merchant account from the received total crypto.
       const order = await createOnrampOrder(
         {
           currency: 'NGN',
