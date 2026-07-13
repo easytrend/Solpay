@@ -3234,21 +3234,6 @@ export default function P2PPanel({ connected, walletTokenList }) {
                       return `₦${parsedOnrampAmt.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
                     })()}
                   </div>
-                  <div style={{
-                    fontSize: '10px',
-                    color: 'rgba(250, 204, 21, 0.85)',
-                    background: 'rgba(250, 204, 21, 0.05)',
-                    border: '1px solid rgba(250, 204, 21, 0.15)',
-                    borderRadius: '8px',
-                    padding: '8px 12px',
-                    marginTop: '8px',
-                    display: 'inline-block',
-                    maxWidth: '92%',
-                    textAlign: 'center',
-                    lineHeight: '1.4'
-                  }}>
-                    💡 <b>Rate Fluctuations:</b> The dynamic final NGN total is automatically calculated at live rates to cover gas and conversion.
-                  </div>
                 </div>
 
                 {/* Divider */}
