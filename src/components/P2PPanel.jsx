@@ -1270,6 +1270,14 @@ export default function P2PPanel({ connected, walletTokenList }) {
   // merchant account. The user receives the remaining USDC.
   const platformFeeUsdc = 0.2;
 
+  // ── Validation: Onramp minimum $1.00 USD worth of crypto ───────────────────
+  const ONRAMP_MIN_USD = 1.00;
+  // estOnrampCrypto is defined later; we use grossOnrampCrypto here for early check
+  const onrampGrossValueUsd = (onrampInputMode === 'fiat'
+    ? (onrampNgnRate > 0 ? (parseFloat(onrampAmount) || 0) / onrampNgnRate : 0)
+    : (parseFloat(onrampAmount) || 0)) * tokenPriceUsd;
+  const onrampBelowMinimum = (parseFloat(onrampAmount) || 0) > 0 && onrampGrossValueUsd < ONRAMP_MIN_USD;
+
   const parsedOnrampAmtRaw = parseFloat(onrampAmount) || 0;
   const parsedOnrampAmt = onrampInputMode === 'crypto' ? parsedOnrampAmtRaw * onrampNgnRate : parsedOnrampAmtRaw;
   const grossOnrampCrypto = onrampInputMode === 'fiat' ? (onrampNgnRate > 0 ? parsedOnrampAmt / onrampNgnRate : 0) : parsedOnrampAmtRaw;
@@ -1337,11 +1345,22 @@ export default function P2PPanel({ connected, walletTokenList }) {
   );
   const displayBank = selectedBank === 'Choose Bank' ? (allBankNames[0] || 'Choose Bank') : selectedBank;
 
+  // ── Validation: Offramp minimum $0.80 USD in crypto ──────────────────────
+  const OFFRAMP_MIN_USD = 0.80;
+  const offrampCryptoValueUsd = baseCryptoAmount * tokenPriceUsd;
+  const offrampBelowMinimum = parsedAmt > 0 && offrampCryptoValueUsd < OFFRAMP_MIN_USD;
+
+  // ── Validation: Offramp insufficient balance ────────────────────────────────
+  const walletBalance = liveSelectedToken.balance || 0;
+  const offrampExceedsBalance = parsedAmt > 0 && baseCryptoAmount > walletBalance;
+
   const isFormValid =
     !!sessionToken &&
     isLiveRoute &&
     !apiError &&
     parsedAmt > 0 &&
+    !offrampBelowMinimum &&
+    !offrampExceedsBalance &&
     !!accountNumber &&
     accountNumber.trim().length >= 8 &&
     selectedBank !== 'Choose Bank' &&
@@ -2882,6 +2901,38 @@ export default function P2PPanel({ connected, walletTokenList }) {
               </div>
             )}
 
+            {/* Offramp validation error messages */}
+            {parsedAmt > 0 && offrampBelowMinimum && (
+              <div style={{
+                background: 'rgba(239, 68, 68, 0.08)',
+                border: '1px solid rgba(239, 68, 68, 0.2)',
+                borderRadius: '8px',
+                padding: '10px 12px',
+                fontSize: '11px',
+                color: '#f87171',
+                marginBottom: '12px',
+                textAlign: 'left',
+                lineHeight: '1.4'
+              }}>
+                ✕ Minimum offramp is $0.80 worth of {liveSelectedToken.symbol}. Please increase your amount.
+              </div>
+            )}
+            {parsedAmt > 0 && offrampExceedsBalance && !offrampBelowMinimum && (
+              <div style={{
+                background: 'rgba(239, 68, 68, 0.08)',
+                border: '1px solid rgba(239, 68, 68, 0.2)',
+                borderRadius: '8px',
+                padding: '10px 12px',
+                fontSize: '11px',
+                color: '#f87171',
+                marginBottom: '12px',
+                textAlign: 'left',
+                lineHeight: '1.4'
+              }}>
+                ✕ Insufficient balance. You need {baseCryptoAmount.toFixed(4)} {liveSelectedToken.symbol} but only have {walletBalance.toLocaleString(undefined, { maximumFractionDigits: 4 })} {liveSelectedToken.symbol} in your wallet.
+              </div>
+            )}
+
             {/* Submit button + Relayer badge */}
             <button
               className="send-btn"
@@ -3304,13 +3355,30 @@ export default function P2PPanel({ connected, walletTokenList }) {
             </div>
           )}
 
+          {/* Onramp validation error messages */}
+          {(parseFloat(onrampAmount) || 0) > 0 && onrampBelowMinimum && (
+            <div style={{
+              background: 'rgba(239, 68, 68, 0.08)',
+              border: '1px solid rgba(239, 68, 68, 0.2)',
+              borderRadius: '8px',
+              padding: '10px 12px',
+              fontSize: '11px',
+              color: '#f87171',
+              marginBottom: '12px',
+              textAlign: 'left',
+              lineHeight: '1.4'
+            }}>
+              ✕ Minimum buy is $1.00 worth of {liveSelectedToken.symbol}. Please increase your amount.
+            </div>
+          )}
+
           {/* Get Bank Details Button */}
           {!onrampOrder && (
             <button
               className="send-btn"
               onClick={handleOnrampSubmit}
-              disabled={onrampLoading || !parsedOnrampAmt || parsedOnrampAmt <= 0 || !sessionToken}
-              style={{ opacity: (onrampLoading || !parsedOnrampAmt || !sessionToken) ? 0.6 : 1, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', padding: '13px 16px' }}
+              disabled={onrampLoading || !parsedOnrampAmt || parsedOnrampAmt <= 0 || !sessionToken || onrampBelowMinimum}
+              style={{ opacity: (onrampLoading || !parsedOnrampAmt || !sessionToken || onrampBelowMinimum) ? 0.6 : 1, cursor: (onrampLoading || !parsedOnrampAmt || !sessionToken || onrampBelowMinimum) ? 'not-allowed' : 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', padding: '13px 16px' }}
             >
               {onrampLoading ? (
                 <>
