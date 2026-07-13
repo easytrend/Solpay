@@ -15,6 +15,7 @@ import {
   TrustWalletAdapter,
   TrezorWalletAdapter,
 } from '@solana/wallet-adapter-wallets';
+import { Analytics } from '@vercel/analytics/react';
 
 // Wallet adapter default UI styles (for the "Select Wallet" modal)
 import '@solana/wallet-adapter-react-ui/styles.css';
@@ -40,6 +41,7 @@ function Root() {
       <WalletProvider wallets={wallets} autoConnect>
         <WalletModalProvider>
           <App />
+          <Analytics />
         </WalletModalProvider>
       </WalletProvider>
     </ConnectionProvider>
