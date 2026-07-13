@@ -95,7 +95,17 @@ export default async function handler(req, res) {
     if (!supabaseUrl || !supabaseAnonKey) {
       return res.status(503).json({ error: 'Supabase credentials missing' });
     }
-    supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+    // SECURITY: Use service-role key for server-side DB operations.
+    // The anon key is the PUBLIC client-side key — if RLS is misconfigured,
+    // an attacker can directly UPDATE p2p_transactions via the Supabase REST API
+    // to change user_address to their own wallet before calling this endpoint.
+    // The service-role key bypasses RLS and is meant for trusted server-side use only.
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!supabaseServiceKey) {
+      console.warn('[relay_onramp_fee] WARNING: SUPABASE_SERVICE_ROLE_KEY not set. Falling back to anon key. Set the service-role key in production to prevent RLS bypass attacks.');
+    }
+    supabase = createClient(supabaseUrl, supabaseServiceKey || supabaseAnonKey);
 
     // 2. Parse request body
     let body = req.body;
@@ -171,10 +181,41 @@ export default async function handler(req, res) {
     }
     const userPublicKey = new PublicKey(userAddressStr);
 
-    // Double forwarding prevention check
+    // ──────────────────────────────────────────────────────────────────────────
+    // SECURITY: Atomic double-forward prevention.
+    //
+    // The previous check was: read status → if FORWARDED_SUCCESS, return early.
+    // This is a classic TOCTOU race: two concurrent requests both read the status
+    // BEFORE either updates it, and both proceed to forward USDC — doubling the payout.
+    //
+    // Fix: Use a conditional UPDATE as a lock. Only the first request that
+    // successfully transitions status from non-forwarded → FORWARDING will proceed.
+    // If the row was already FORWARDED_SUCCESS or FORWARDING, the update affects
+    // 0 rows and we return early.
+    // ──────────────────────────────────────────────────────────────────────────
     const currentDbStatus = (dbTx.status || '').toUpperCase();
     if (currentDbStatus === 'FORWARDED_SUCCESS') {
       return res.status(200).json({ signature: dbTx.signature, netAmount: dbTx.crypto_amount - 0.10, alreadyForwarded: true });
+    }
+
+    // Atomically claim this order for forwarding — only succeeds if status is NOT already FORWARDING or FORWARDED_SUCCESS
+    const { data: claimResult, error: claimError } = await supabase
+      .from('p2p_transactions')
+      .update({
+        status: 'FORWARDING',
+        updated_at: new Date().toISOString()
+      })
+      .eq('order_id', String(orderId))
+      .neq('status', 'FORWARDING')
+      .neq('status', 'FORWARDED_SUCCESS')
+      .select('id');
+
+    if (claimError) {
+      throw new Error(`Failed to claim order for forwarding: ${claimError.message}`);
+    }
+    if (!claimResult || claimResult.length === 0) {
+      // Another concurrent request already claimed this order
+      return res.status(200).json({ error: 'Order is already being forwarded or was already forwarded.', alreadyForwarded: true });
     }
 
     // 5. Build forwarding transaction
@@ -191,9 +232,33 @@ export default async function handler(req, res) {
       throw new Error(`USDC transfer units is too small: ${netAmount}`);
     }
 
+    // ──────────────────────────────────────────────────────────────────────────
+    // SECURITY: Verify on-chain USDC deposit before forwarding.
+    //
+    // Even if PajCash says the order is "COMPLETED", we verify that the relayer's
+    // USDC ATA actually has sufficient balance to cover this forward. This prevents
+    // an attacker from triggering a forward for funds that were never deposited
+    // (e.g. via a stolen/guessed sessionToken or a manipulated DB record).
+    // ──────────────────────────────────────────────────────────────────────────
     const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
     const relayerATA = getAssociatedTokenAddressSync(USDC_MINT, relayerKp.publicKey);
     const userATA = getAssociatedTokenAddressSync(USDC_MINT, userPublicKey);
+
+    let relayerUsdcBalance = 0n;
+    try {
+      const balResp = await connection.getTokenAccountBalance(relayerATA, 'confirmed');
+      relayerUsdcBalance = BigInt(balResp.value.amount || '0');
+    } catch (e) {
+      throw new Error(`Failed to check relayer USDC balance: ${e.message}`);
+    }
+
+    if (relayerUsdcBalance < units) {
+      throw new Error(
+        `Relayer USDC balance (${relayerUsdcBalance} base units) is insufficient ` +
+        `to forward ${units} base units (${netAmount} USDC). ` +
+        `The on-chain deposit may not have arrived yet.`
+      );
+    }
 
     // Build standard Transaction
     const transaction = new Transaction();

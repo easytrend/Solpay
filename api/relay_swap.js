@@ -107,47 +107,137 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Transaction feePayer does not match relayer' });
     }
 
-    // 2. Drain Check (Smart)
-    // We allow the relayer to be referenced in instructions for legitimate purposes:
-    //   - ComputeBudget instructions (0x03... prefix) — never move funds
-    //   - ATA creation (Associated Token Program) — relayer is rent funder, not a drain
-    // We BLOCK only if the relayer appears as the 'from' account (index 0 of accountKeyIndexes)
-    // in a SystemProgram.transfer instruction (program ID = 11111...111), which would be an
-    // actual SOL drain.
-    const SYSTEM_PROGRAM_ID = '11111111111111111111111111111111';
-    const staticKeys = transaction.message.staticAccountKeys;
+    // ──────────────────────────────────────────────────────────────────────────
+    // 2. FULL Drain Check — resolves ALTs so every account key is visible.
+    //
+    // Previous check only inspected staticAccountKeys. V0 transactions can
+    // reference accounts through Address Lookup Tables (loadedAddresses), which
+    // were completely invisible. An attacker could put the relayer's pubkey in
+    // an ALT and drain it through ALT-resolved account indices.
+    //
+    // Additionally, the old check only blocked SystemProgram.transfer (SOL).
+    // Token Program instructions were not checked at all, allowing an attacker
+    // to drain the relayer's USDC/SPL token accounts.
+    // ──────────────────────────────────────────────────────────────────────────
 
-    const isDrainAttempt = transaction.message.compiledInstructions.some(ix => {
-      // Get the program ID for this instruction
-      const programKey = staticKeys[ix.programIdIndex];
-      if (!programKey) return false;
-      const programId = programKey.toBase58();
-
-      // Only SystemProgram can transfer native SOL
-      if (programId !== SYSTEM_PROGRAM_ID) return false;
-
-      // SystemProgram.transfer instruction: discriminator is [2, 0, 0, 0] (u32 LE)
-      // The 'from' account is at accountKeyIndexes[0].
-      // If relayer (index 0 in staticKeys) is the 'from' account, it's a drain.
-      if (ix.data && ix.data.length >= 4) {
-        const discriminator = ix.data[0] | (ix.data[1] << 8) | (ix.data[2] << 16) | (ix.data[3] << 24);
-        const TRANSFER_DISCRIMINATOR = 2; // SystemProgram::transfer
-        if (discriminator === TRANSFER_DISCRIMINATOR) {
-          // ix.accountKeyIndexes[0] is the 'from' address for a transfer
-          if (ix.accountKeyIndexes[0] === 0) return true; // relayer is being drained!
-        }
-      }
-      return false;
-    });
-
-    if (isDrainAttempt) {
-      return res.status(400).json({ error: 'Blocked: Transaction attempts to transfer SOL from relayer wallet.' });
-    }
-
-    // 3. Balance Check
     const rpcUrl = process.env.VITE_RPC_URL || 'https://rpc.ankr.com/solana';
     const connection = new Connection(rpcUrl, 'confirmed');
 
+    // 2a. Resolve ALL Address Lookup Tables referenced by the transaction
+    const altLookups = transaction.message.addressTableLookups || [];
+    const resolvedAltKeys = []; // flat array of all ALT-resolved pubkeys in order
+    for (const lookup of altLookups) {
+      let altAccountInfo;
+      try {
+        altAccountInfo = await connection.getAddressLookupTable(lookup.accountKey);
+      } catch (e) {
+        return res.status(400).json({ error: `Failed to fetch Address Lookup Table ${lookup.accountKey.toBase58()}: ${e.message}` });
+      }
+      if (!altAccountInfo?.value) {
+        return res.status(400).json({ error: `Address Lookup Table ${lookup.accountKey.toBase58()} not found on chain.` });
+      }
+      // V0 messages index into ALT entries via writableIndexes and readonlyIndexes.
+      // The combined resolved key list is: staticKeys + ALT writable entries + ALT readonly entries
+      // (in the order they appear in addressTableLookups).
+      for (const idx of lookup.writableIndexes) {
+        resolvedAltKeys.push(altAccountInfo.value.state.addresses[idx]);
+      }
+      for (const idx of lookup.readonlyIndexes) {
+        resolvedAltKeys.push(altAccountInfo.value.state.addresses[idx]);
+      }
+    }
+
+    // Build the COMPLETE account key list (same order the runtime uses)
+    const staticKeys = transaction.message.staticAccountKeys;
+    const allKeys = [...staticKeys, ...resolvedAltKeys];
+
+    // Identify all indices where the relayer's pubkey appears
+    const relayerBase58 = relayerKp.publicKey.toBase58();
+    const relayerIndices = new Set();
+    for (let i = 0; i < allKeys.length; i++) {
+      if (allKeys[i].toBase58() === relayerBase58) {
+        relayerIndices.add(i);
+      }
+    }
+
+    // Program IDs to inspect
+    const SYSTEM_PROGRAM_ID = '11111111111111111111111111111111';
+    const TOKEN_PROGRAM_IDS = new Set([
+      'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',  // SPL Token
+      'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',  // Token-2022
+    ]);
+
+    // Dangerous token opcodes that should NEVER appear in a relayer-signed tx:
+    //   3  = Transfer (legacy)      — moves tokens from source
+    //   4  = Approve                — grants delegate spend authority
+    //   6  = SetAuthority           — transfers account ownership
+    //   12 = TransferChecked        — moves tokens from source (with mint/decimals)
+    //   25 = ApproveChecked         — grants delegate spend authority (with decimals)
+    const DANGEROUS_TOKEN_OPCODES = new Map([
+      [3,  'Transfer'],
+      [4,  'Approve'],
+      [6,  'SetAuthority'],
+      [12, 'TransferChecked'],
+      [25, 'ApproveChecked'],
+    ]);
+
+    for (const ix of transaction.message.compiledInstructions) {
+      const programKey = allKeys[ix.programIdIndex];
+      if (!programKey) continue;
+      const programId = programKey.toBase58();
+
+      // 2b. SystemProgram: block if relayer is the 'from' (source) in a transfer.
+      //     SystemProgram.transfer discriminator = 2 (u32 LE), from = accountKeyIndexes[0].
+      if (programId === SYSTEM_PROGRAM_ID) {
+        if (ix.data && ix.data.length >= 4) {
+          const discriminator = ix.data[0] | (ix.data[1] << 8) | (ix.data[2] << 16) | (ix.data[3] << 24);
+          if (discriminator === 2) { // SystemProgram::transfer
+            const fromIndex = ix.accountKeyIndexes[0];
+            if (relayerIndices.has(fromIndex)) {
+              return res.status(400).json({
+                error: 'Blocked: Transaction attempts to transfer SOL from relayer wallet (detected via full account key resolution).'
+              });
+            }
+          }
+        }
+      }
+
+      // 2c. Token Programs: block any instruction where the relayer is the source
+      //     authority for a transfer, or where Approve/SetAuthority targets the relayer.
+      //
+      //     For Transfer (3):        accountKeyIndexes[2] = owner/authority
+      //     For Approve (4):         accountKeyIndexes[2] = owner
+      //     For SetAuthority (6):    accountKeyIndexes[0] = account, [1] = current authority
+      //     For TransferChecked (12): accountKeyIndexes[3] = owner/authority
+      //     For ApproveChecked (25): accountKeyIndexes[2] = owner
+      if (TOKEN_PROGRAM_IDS.has(programId) && ix.data && ix.data.length > 0) {
+        const opcode = ix.data[0];
+        if (DANGEROUS_TOKEN_OPCODES.has(opcode)) {
+          let authorityIndex = -1;
+
+          if (opcode === 3) {         // Transfer — authority at index 2
+            authorityIndex = ix.accountKeyIndexes[2];
+          } else if (opcode === 4) {  // Approve — owner at index 2
+            authorityIndex = ix.accountKeyIndexes[2];
+          } else if (opcode === 6) {  // SetAuthority — current authority at index 1
+            authorityIndex = ix.accountKeyIndexes[1];
+          } else if (opcode === 12) { // TransferChecked — owner/authority at index 3
+            authorityIndex = ix.accountKeyIndexes[3];
+          } else if (opcode === 25) { // ApproveChecked — owner at index 2
+            authorityIndex = ix.accountKeyIndexes[2];
+          }
+
+          if (authorityIndex >= 0 && relayerIndices.has(authorityIndex)) {
+            const opName = DANGEROUS_TOKEN_OPCODES.get(opcode);
+            return res.status(400).json({
+              error: `Blocked: Transaction contains a Token ${opName} (opcode ${opcode}) with relayer as source authority. This would drain relayer token accounts.`
+            });
+          }
+        }
+      }
+    }
+
+    // 3. Balance Check
     const relayerBalance = await connection.getBalance(relayerKp.publicKey).catch(() => 0);
     if (relayerBalance < 10_000) {
       return res.status(503).json({ error: `Relayer wallet has insufficient SOL (${(relayerBalance / 1e9).toFixed(5)} SOL). Please fund it.` });
