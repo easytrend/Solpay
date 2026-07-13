@@ -1410,19 +1410,17 @@ export default function P2PPanel({ connected, walletTokenList }) {
         ? liveSelectedToken.mint
         : 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'; // Default to USDC mint
 
-      // We must pass the `adjustedFiatAmount` so that when PajCash adds the 0.2 USDC 
-      // fee on top, the final payment slip exactly equals `parsedOnrampAmt`.
-      const platformFeeNgn = platformFeeUsdc * onrampNgnRate;
-      const adjustedFiatAmount = Math.max(0, parsedOnrampAmt - platformFeeNgn);
-
+      // Pass the EXACT amount the user typed. PajCash generates the payment slip
+      // for this exact fiat amount. The `fee: 0.2` param instructs PajCash to
+      // deduct 0.2 USDC from the crypto it sends to the user's wallet (not from
+      // the fiat). So: user pays ₦5000 → PajCash converts → sends (USDC - 0.2) to user.
       const order = await createOnrampOrder(
         {
           currency: 'NGN',
-          fiatAmount: adjustedFiatAmount, // Send reduced base so Total = Input
-
+          fiatAmount: parsedOnrampAmt, // Exactly what the user typed
           recipient: publicKey.toBase58(),
           chain: 'SOLANA',
-          fee: platformFeeUsdc, // 0.2 USDC platform fee
+          fee: platformFeeUsdc, // 0.2 USDC deducted from crypto output, not fiat
           mint: onrampMint,
         },
         sessionToken
