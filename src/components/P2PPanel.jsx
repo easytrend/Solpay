@@ -1264,12 +1264,6 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const baseCryptoAmount = estCryptoAmount + platformFeeInToken;
   const fiatAmountText = parsedAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  // ── Onramp fee (0.2 USDC flat — deducted from the buyer's crypto received) ─────────
-  // PajCash receives the exact fiatAmount the user input, converts it to USDC at the live
-  // rate, deducts 0.2 USDC, and deposits that 0.2 USDC directly into the developer's
-  // merchant account. The user receives the remaining USDC.
-  const platformFeeUsdc = 0.2;
-
   // ── Validation: Onramp minimum $1.00 USD worth of crypto ───────────────────
   const ONRAMP_MIN_USD = 1.00;
   // estOnrampCrypto is defined later; we use grossOnrampCrypto here for early check
@@ -1283,10 +1277,10 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const grossOnrampCrypto = onrampInputMode === 'fiat' ? (onrampNgnRate > 0 ? parsedOnrampAmt / onrampNgnRate : 0) : parsedOnrampAmtRaw;
   
   // Use the live PajCash quote (pajcashNetUsdc) when available — it reflects 
-  // PajCash's own processing fee. We then subtract our platform fee from that.
+  // PajCash's own processing fee.
   const estOnrampCrypto = pajcashNetUsdc !== null
-    ? Math.max(0, pajcashNetUsdc - platformFeeUsdc)
-    : Math.max(0, grossOnrampCrypto - platformFeeUsdc);
+    ? pajcashNetUsdc
+    : grossOnrampCrypto;
 
   const displayOnrampAmount = useMemo(() => {
     if (parsedOnrampAmt <= 0) return 0;
@@ -3169,11 +3163,6 @@ export default function P2PPanel({ connected, walletTokenList }) {
                 <span style={{ color: 'rgba(255,255,255,0.38)' }}>
                   1 {liveSelectedToken.symbol} ≈ {selectedCountry.symbol}{displayOnrampRate.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
-                {onrampAmount && Number(onrampAmount) > 0 && (
-                  <span style={{ display: 'block', marginTop: '3px', color: 'rgba(255,255,255,0.4)', fontSize: '10.5px' }}>
-                    * 0.2 USDC service fee deducted from payout.
-                  </span>
-                )}
               </div>
             )}
           </div>
