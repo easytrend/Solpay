@@ -1341,8 +1341,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
   );
   const displayBank = selectedBank === 'Choose Bank' ? (allBankNames[0] || 'Choose Bank') : selectedBank;
 
-  // ── Validation: Offramp minimum $0.80 USD in crypto ──────────────────────
-  const OFFRAMP_MIN_USD = 0.80;
+  // ── Validation: Offramp minimum $0.60 USD in crypto ──────────────────────
+  const OFFRAMP_MIN_USD = 0.60;
   const offrampCryptoValueUsd = baseCryptoAmount * tokenPriceUsd;
   const offrampBelowMinimum = parsedAmt > 0 && offrampCryptoValueUsd < OFFRAMP_MIN_USD;
 
@@ -2928,7 +2928,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
                 textAlign: 'left',
                 lineHeight: '1.4'
               }}>
-                ✕ Minimum offramp is $0.80 worth of {liveSelectedToken.symbol}. Please increase your amount.
+                ✕ Minimum offramp is $0.60 worth of {liveSelectedToken.symbol}. Please increase your amount.
               </div>
             )}
             {parsedAmt > 0 && offrampExceedsBalance && !offrampBelowMinimum && (
