@@ -11,6 +11,8 @@ import { CURRENCIES } from './data/currencies';
 import { useLiveRates } from './hooks/useLiveRates';
 import { fmtTok, fmtFiat, fmtRate, robustResolve, robustReverseLookup } from './utils';
 import CurrDrop from './components/CurrDrop';
+import HeadlineTicker from './components/HeadlineTicker';
+import GamesPanel from './components/GamesPanel';
 import AmountInput from './components/AmountInput';
 import BulkSendPanel from './components/BulkSendPanel';
 import TokenModal from './components/TokenModal';
@@ -310,6 +312,7 @@ export default function App() {
     return () => clearInterval(intervalId);
   }, []);
 
+  const [showGamesPanel, setShowGamesPanel] = useState(false);
   const [bulkMode, setBulkMode] = useState(false);
   const [activeTab, setActiveTab] = useState('p2p');
   const [showModal, setShowModal] = useState(false);
@@ -1044,6 +1047,9 @@ export default function App() {
         </div>
       </nav>
 
+      {/* TxODDs Headline Marquee Ticker */}
+      <HeadlineTicker onClickTicker={() => setShowGamesPanel(true)} />
+
       <FloatClaimWidget liveSolPrice={liveSolPrice} onClaimSuccess={fetchBalances} />
 
       <div className={`main tab-${activeTab}`}>
@@ -1271,6 +1277,11 @@ export default function App() {
           <span className="bnav-label">Swap</span>
         </button>
       </div>
+
+      {/* TxODDs Live Games Panel */}
+      {showGamesPanel && (
+        <GamesPanel onClose={() => setShowGamesPanel(false)} />
+      )}
     </div>
   );
 }
