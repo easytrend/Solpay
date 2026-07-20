@@ -3964,7 +3964,18 @@ export default function P2PPanel({ connected, walletTokenList }) {
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 animation: 'pulseRing 2s ease infinite',
               }}>
-                <span style={{ fontSize: '32px', lineHeight: 1 }}>✅</span>
+                {/* Green rounded-square with white tick — matches offramp popup style */}
+                <div style={{
+                  width: '42px', height: '42px',
+                  borderRadius: '10px',
+                  background: 'linear-gradient(135deg, #84cc16 0%, #65a30d 100%)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  boxShadow: '0 2px 12px rgba(132,204,22,0.4)',
+                }}>
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                </div>
               </div>
             </div>
 
