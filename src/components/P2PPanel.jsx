@@ -1976,31 +1976,17 @@ export default function P2PPanel({ connected, walletTokenList }) {
         setRelayerActive(false);
       }
 
-      // 7. Poll for confirmation
-      let confirmed = false;
-      const deadline = Date.now() + 60_000;
-      while (Date.now() < deadline) {
-        const status = await connection.getSignatureStatus(sig).catch(() => null);
-        const conf = status?.value?.confirmationStatus;
-        if (conf === 'confirmed' || conf === 'finalized') { confirmed = true; break; }
-        if (status?.value?.err) throw new Error('Transaction rejected: ' + JSON.stringify(status.value.err));
-        await new Promise(r => setTimeout(r, 2000));
-      }
-
-      if (!confirmed) {
-        setP2pError(`Transaction sent but not yet confirmed. Signature: ${sig}`);
-        return;
-      }
-
-      // 8. Persist order details in localStorage (keyed by wallet address)
+      // 7. Persist order to localStorage and log to Supabase IMMEDIATELY after
+      //    sig is known — before polling. This ensures a network blip during
+      //    the confirmation poll never loses the record from the history panel.
       const walletKey = publicKey.toBase58();
       const existing = (() => {
         try { return JSON.parse(localStorage.getItem(`paj_user_orders_${walletKey}`) || '[]'); }
         catch { return []; }
       })();
-      existing.unshift({ 
-        id: order.id, 
-        sig, 
+      existing.unshift({
+        id: order.id,
+        sig,
         ts: Date.now(),
         bank: displayBank,
         account: accountNumber.trim(),
@@ -2008,12 +1994,18 @@ export default function P2PPanel({ connected, walletTokenList }) {
       });
       localStorage.setItem(`paj_user_orders_${walletKey}`, JSON.stringify(existing.slice(0, 100)));
 
+      // BUG FIX 1: Use parsedAmt (always the fiat-side value) instead of
+      // Number(amount) which is the raw input string and is wrong when the
+      // user typed in crypto mode (e.g. typing "2" USDC logged fiatLogged=2
+      // instead of the correct NGN equivalent like 3100).
       const cryptoLogged = order.amount || estCryptoAmount;
-      const fiatLogged = Number(amount);
+      const fiatLogged = parsedAmt; // parsedAmt = input converted to fiat regardless of inputMode
       const usdLogged = selectedCountry.currency === 'USD'
         ? fiatLogged
         : fiatLogged / (ngnRate || 1);
 
+      // BUG FIX 2: Log to Supabase immediately with PENDING status so the
+      // record exists even if the confirmation poll times out due to a blip.
       logP2PTransaction({
         signature: sig,
         userAddress: walletKey,
@@ -2026,10 +2018,39 @@ export default function P2PPanel({ connected, walletTokenList }) {
         bankName: displayBank,
         accountNumber: accountNumber.trim(),
         accountName: accountName || 'Account Holder',
-        status: 'INIT',
+        status: 'PENDING',
         userEmail: sessionEmail || undefined,
         depositAddress: order.address,
       });
+
+      // 8. Poll for on-chain confirmation
+      let confirmed = false;
+      const deadline = Date.now() + 60_000;
+      while (Date.now() < deadline) {
+        const status = await connection.getSignatureStatus(sig).catch(() => null);
+        const conf = status?.value?.confirmationStatus;
+        if (conf === 'confirmed' || conf === 'finalized') { confirmed = true; break; }
+        if (status?.value?.err) throw new Error('Transaction rejected: ' + JSON.stringify(status.value.err));
+        await new Promise(r => setTimeout(r, 2000));
+      }
+
+      if (!confirmed) {
+        // Last-chance check — one final RPC call in case the poll window expired
+        // during a brief network hiccup while the tx was actually confirming.
+        const finalStatus = await connection.getSignatureStatus(sig).catch(() => null);
+        const finalConf = finalStatus?.value?.confirmationStatus;
+        if (finalConf === 'confirmed' || finalConf === 'finalized') {
+          confirmed = true;
+        }
+      }
+
+      if (!confirmed) {
+        // Mark as TIMEOUT in Supabase — the PENDING record is already saved above,
+        // so the history panel will still show this order.
+        updateP2PTransactionStatus(order.id, 'TIMEOUT', sig);
+        setP2pError(`Transaction sent but confirmation timed out. Check Solscan: ${sig.slice(0, 8)}…`);
+        return;
+      }
 
       // Show modal immediately with PENDING status
       setSuccessDetails({
