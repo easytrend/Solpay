@@ -212,10 +212,11 @@ const BANK_ALIASES = {
 };
 
 function searchMatchesBank(bankNameStr, rawQuery) {
+  if (!bankNameStr || typeof bankNameStr !== 'string') return { isMatch: false, score: 0 };
   const query = rawQuery.toLowerCase().trim();
   if (!query) return { isMatch: true, score: 0 };
 
-  const nameLower = bankNameStr.toLowerCase();
+  const nameLower = bankNameStr.toLowerCase().trim();
   const nameClean = nameLower.replace(/[^a-z0-9]/g, '');
   const queryClean = query.replace(/[^a-z0-9]/g, '');
 
@@ -236,26 +237,32 @@ function searchMatchesBank(bankNameStr, rawQuery) {
     return { isMatch: true, score: 65 };
   }
 
-  // 4. Initials / Acronym match (e.g. "gtb" -> Guaranty Trust Bank)
+  // 4. Word-start match (e.g. "opay" matching "OPay Digital Services")
   const words = nameLower.split(/[\s\-_()]+/);
+  const wordStartsWith = words.some(w => w.startsWith(queryClean));
+  if (wordStartsWith) {
+    return { isMatch: true, score: 80 };
+  }
+
+  // 5. Initials / Acronym match (e.g. "gtb" -> Guaranty Trust Bank)
   const initials = words.map(w => w[0]).join('');
   if (initials === queryClean || initials.startsWith(queryClean)) {
     return { isMatch: true, score: 75 };
   }
 
-  // 5. Alias match (e.g. searching "opay" matching "Paycom", or "gtb" matching "Guaranty Trust")
+  // 6. Alias match (e.g. searching "opay" matching "Paycom", or "gtb" matching "Guaranty Trust")
   for (const [aliasKey, targetList] of Object.entries(BANK_ALIASES)) {
     if (queryClean === aliasKey || aliasKey.startsWith(queryClean) || queryClean.startsWith(aliasKey)) {
       for (const target of targetList) {
         const targetClean = target.replace(/[^a-z0-9]/g, '');
-        if (nameClean.includes(targetClean) || targetClean.includes(nameClean)) {
+        if (nameClean.includes(targetClean)) {
           return { isMatch: true, score: 80 };
         }
       }
     }
   }
 
-  // 6. Multi-word token matching
+  // 7. Multi-word token matching
   const queryTokens = query.split(/\s+/).filter(Boolean);
   if (queryTokens.length > 1) {
     const allTokensFound = queryTokens.every(tok => nameLower.includes(tok));
@@ -2757,8 +2764,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
                     position: 'fixed',
                     top: 0, left: 0, right: 0, bottom: 0,
                     zIndex: 99999,
-                    background: 'rgba(0,0,0,0.75)',
-                    backdropFilter: 'blur(6px)',
+                    background: 'rgba(4, 7, 13, 0.82)',
+                    backdropFilter: 'blur(10px)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -2768,16 +2775,16 @@ export default function P2PPanel({ connected, walletTokenList }) {
                 >
                   <div
                     style={{
-                      background: '#121722',
-                      border: '1px solid rgba(255,255,255,0.12)',
-                      borderRadius: '16px',
+                      background: '#0a0e17',
+                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      borderRadius: '20px',
                       width: '100%',
                       maxWidth: '420px',
                       maxHeight: '85vh',
                       display: 'flex',
                       flexDirection: 'column',
                       overflow: 'hidden',
-                      boxShadow: '0 20px 40px rgba(0,0,0,0.6)',
+                      boxShadow: '0 24px 48px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.05)',
                     }}
                     onClick={e => e.stopPropagation()}
                   >
@@ -2787,23 +2794,26 @@ export default function P2PPanel({ connected, walletTokenList }) {
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
-                        padding: '14px 16px',
-                        borderBottom: '1px solid rgba(255,255,255,0.08)',
+                        padding: '16px 20px',
+                        borderBottom: '1px solid rgba(255, 255, 255, 0.07)',
+                        background: 'rgba(255, 255, 255, 0.02)',
                       }}
                     >
-                      <span style={{ fontSize: '15px', fontWeight: '600', color: 'white' }}>Select Bank</span>
+                      <span style={{ fontSize: '15px', fontWeight: '600', color: 'white', letterSpacing: '-0.01em' }}>
+                        Select Bank
+                      </span>
                       <button
                         type="button"
                         onClick={() => { setBankOpen(false); setBankSearch(''); }}
                         style={{
-                          background: 'rgba(255,255,255,0.08)',
-                          border: 'none',
-                          color: 'rgba(255,255,255,0.6)',
+                          background: 'rgba(255, 255, 255, 0.06)',
+                          border: '1px solid rgba(255, 255, 255, 0.1)',
+                          color: 'rgba(255, 255, 255, 0.6)',
                           width: '28px',
                           height: '28px',
                           borderRadius: '50%',
                           cursor: 'pointer',
-                          fontSize: '14px',
+                          fontSize: '13px',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
@@ -2814,25 +2824,25 @@ export default function P2PPanel({ connected, walletTokenList }) {
                     </div>
 
                     {/* Search Input */}
-                    <div style={{ padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div style={{ padding: '14px 20px', borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
                       <div
                         style={{
                           display: 'flex',
                           alignItems: 'center',
-                          gap: '8px',
-                          background: 'rgba(255,255,255,0.05)',
-                          border: '1px solid rgba(255,255,255,0.12)',
-                          borderRadius: '10px',
-                          padding: '8px 12px',
+                          gap: '10px',
+                          background: 'rgba(255, 255, 255, 0.04)',
+                          border: '1px solid rgba(255, 255, 255, 0.1)',
+                          borderRadius: '12px',
+                          padding: '10px 14px',
                         }}
                       >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.4)" strokeWidth="2.5">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(255, 255, 255, 0.4)" strokeWidth="2.2">
                           <circle cx="11" cy="11" r="8" />
                           <line x1="21" y1="21" x2="16.65" y2="16.65" />
                         </svg>
                         <input
                           type="text"
-                          placeholder="Search bank (e.g. Opay, GTB, Kuda...)"
+                          placeholder="Search bank name or alias (e.g. Opay, GTB, Kuda...)"
                           value={bankSearch}
                           autoFocus
                           onChange={e => setBankSearch(e.target.value)}
@@ -2845,6 +2855,22 @@ export default function P2PPanel({ connected, walletTokenList }) {
                             fontSize: '13px',
                           }}
                         />
+                        {bankSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setBankSearch('')}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: 'rgba(255,255,255,0.4)',
+                              cursor: 'pointer',
+                              fontSize: '12px',
+                              padding: 0,
+                            }}
+                          >
+                            ✕
+                          </button>
+                        )}
                       </div>
                     </div>
 
@@ -2852,17 +2878,20 @@ export default function P2PPanel({ connected, walletTokenList }) {
                     <div ref={bankListScrollRef} style={{ flex: 1, overflowY: 'auto', maxHeight: '340px', padding: '6px 0' }}>
                       {filteredBanksList.map(b => {
                         const meta = getBankMetadata(b);
+                        const isSelected = selectedBank === b;
                         return (
                           <div
                             key={b}
-                            className={`drop-item ${selectedBank === b ? 'sel' : ''}`}
+                            className={`drop-item ${isSelected ? 'sel' : ''}`}
                             onClick={() => { setSelectedBank(b); setBankOpen(false); setBankSearch(''); }}
                             style={{
                               display: 'flex',
                               alignItems: 'center',
                               gap: '12px',
-                              padding: '10px 16px',
+                              padding: '11px 20px',
                               cursor: 'pointer',
+                              background: isSelected ? 'rgba(34, 197, 94, 0.08)' : 'transparent',
+                              borderLeft: isSelected ? '3px solid var(--lime)' : '3px solid transparent',
                             }}
                           >
                             {meta.logo ? (
@@ -2879,18 +2908,22 @@ export default function P2PPanel({ connected, walletTokenList }) {
                                 width: '26px', height: '26px', borderRadius: '50%',
                                 background: meta.color, color: 'white', fontSize: '10px',
                                 fontWeight: 'bold', alignItems: 'center', justifyContent: 'center',
+                                flexShrink: 0,
                               }}
                             >
                               {meta.initial}
                             </div>
-                            <span style={{ fontSize: '13px', color: selectedBank === b ? 'var(--lime)' : 'white', fontWeight: selectedBank === b ? '600' : '400' }}>
+                            <span style={{ fontSize: '13px', color: isSelected ? 'var(--lime)' : 'white', fontWeight: isSelected ? '600' : '400' }}>
                               {b}
                             </span>
+                            {isSelected && (
+                              <span style={{ marginLeft: 'auto', color: 'var(--lime)', fontSize: '12px', fontWeight: 'bold' }}>✓</span>
+                            )}
                           </div>
                         );
                       })}
                       {filteredBanksList.length === 0 && (
-                        <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.4)', fontStyle: 'italic', padding: '20px', textAlign: 'center' }}>
+                        <div style={{ fontSize: '12px', color: 'rgba(255, 255, 255, 0.4)', fontStyle: 'italic', padding: '24px 20px', textAlign: 'center' }}>
                           {bankSearch ? `No banks matching "${bankSearch}"` : 'No banks found'}
                         </div>
                       )}
