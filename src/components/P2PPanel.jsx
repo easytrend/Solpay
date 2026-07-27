@@ -407,6 +407,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const [bankOpen, setBankOpen] = useState(false);
   const [tokenOpen, setTokenOpen] = useState(false);
   const [bankSearch, setBankSearch] = useState('');
+  const bankListScrollRef = useRef(null);
   const [countrySearch, setCountrySearch] = useState('');
   const [tokenSearchQuery, setTokenSearchQuery] = useState('');
   const [tokenSearchResults, setTokenSearchResults] = useState([]);
@@ -623,6 +624,13 @@ export default function P2PPanel({ connected, walletTokenList }) {
     );
     return tokenObj ? tokenObj.logoURI : '';
   };
+
+  // ── Auto-scroll bank dropdown list to top on search query change ─────────────
+  useEffect(() => {
+    if (bankListScrollRef.current) {
+      bankListScrollRef.current.scrollTop = 0;
+    }
+  }, [bankSearch, bankOpen]);
 
   // ── SDK Init ─────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -2755,7 +2763,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
                       style={{ width: '100%', padding: '6px 10px', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border)', borderRadius: '6px', color: 'white', fontSize: '12px', outline: 'none' }}
                     />
                   </div>
-                  <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                  <div ref={bankListScrollRef} style={{ maxHeight: '200px', overflowY: 'auto' }}>
                     {filteredBanksList.map(b => {
                       const meta = getBankMetadata(b);
                       return (
