@@ -170,6 +170,103 @@ const formatTransactionDate = (dateStr) => {
 // Helpers
 // ---------------------------------------------------------------------------
 
+const getBankNameString = (b) => {
+  if (!b) return '';
+  if (typeof b === 'string') return b;
+  return b.name || b.bank_name || b.bankName || b.title || b.label || String(b.id || b.code || '');
+};
+
+const BANK_ALIASES = {
+  opay: ['paycom', 'opay'],
+  paycom: ['opay', 'paycom'],
+  palmpay: ['palmpay', 'palm pay'],
+  kuda: ['kuda'],
+  moniepoint: ['moniepoint', 'teamapt'],
+  teamapt: ['moniepoint', 'teamapt'],
+  gtb: ['guaranty trust', 'gtbank', 'gtb'],
+  gtbank: ['guaranty trust', 'gtbank', 'gtb'],
+  uba: ['united bank for africa', 'uba'],
+  fbn: ['first bank', 'firstbank', 'fbn'],
+  firstbank: ['first bank', 'firstbank', 'fbn'],
+  zenith: ['zenith'],
+  access: ['access'],
+  stanbic: ['stanbic', 'ibtc'],
+  sterling: ['sterling'],
+  wema: ['wema', 'alat'],
+  alat: ['wema', 'alat'],
+  vfd: ['vfd', 'vee'],
+  fairmoney: ['fairmoney', 'fair money'],
+  rubies: ['rubies'],
+  carbon: ['carbon'],
+  ecobank: ['ecobank', 'eco bank'],
+  fidelity: ['fidelity'],
+  fcmb: ['first city monument', 'fcmb'],
+  heritage: ['heritage'],
+  keystone: ['keystone'],
+  polaris: ['polaris', 'skye'],
+  providus: ['providus'],
+  jaiz: ['jaiz'],
+  taj: ['taj'],
+  union: ['union bank', 'union'],
+  unity: ['unity bank', 'unity'],
+};
+
+function searchMatchesBank(bankNameStr, rawQuery) {
+  const query = rawQuery.toLowerCase().trim();
+  if (!query) return { isMatch: true, score: 0 };
+
+  const nameLower = bankNameStr.toLowerCase();
+  const nameClean = nameLower.replace(/[^a-z0-9]/g, '');
+  const queryClean = query.replace(/[^a-z0-9]/g, '');
+
+  if (!queryClean) return { isMatch: true, score: 0 };
+
+  // 1. Exact match
+  if (nameLower === query || nameClean === queryClean) {
+    return { isMatch: true, score: 100 };
+  }
+
+  // 2. Starts with query
+  if (nameLower.startsWith(query) || nameClean.startsWith(queryClean)) {
+    return { isMatch: true, score: 85 };
+  }
+
+  // 3. Substring match
+  if (nameLower.includes(query) || nameClean.includes(queryClean)) {
+    return { isMatch: true, score: 65 };
+  }
+
+  // 4. Initials / Acronym match (e.g. "gtb" -> Guaranty Trust Bank)
+  const words = nameLower.split(/[\s\-_()]+/);
+  const initials = words.map(w => w[0]).join('');
+  if (initials === queryClean || initials.startsWith(queryClean)) {
+    return { isMatch: true, score: 75 };
+  }
+
+  // 5. Alias match (e.g. searching "opay" matching "Paycom", or "gtb" matching "Guaranty Trust")
+  for (const [aliasKey, targetList] of Object.entries(BANK_ALIASES)) {
+    if (queryClean === aliasKey || aliasKey.startsWith(queryClean) || queryClean.startsWith(aliasKey)) {
+      for (const target of targetList) {
+        const targetClean = target.replace(/[^a-z0-9]/g, '');
+        if (nameClean.includes(targetClean) || targetClean.includes(nameClean)) {
+          return { isMatch: true, score: 80 };
+        }
+      }
+    }
+  }
+
+  // 6. Multi-word token matching
+  const queryTokens = query.split(/\s+/).filter(Boolean);
+  if (queryTokens.length > 1) {
+    const allTokensFound = queryTokens.every(tok => nameLower.includes(tok));
+    if (allTokensFound) {
+      return { isMatch: true, score: 50 };
+    }
+  }
+
+  return { isMatch: false, score: 0 };
+}
+
 const getBankMetadata = (bankName) => {
   const clean = bankName.toLowerCase();
   let logo = '';
@@ -854,7 +951,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
     setResolvingName(true);
     setAccountName('');
 
-    const bankObj = apiBanks.find(b => (b.name || b.bank_name || b) === selectedBank);
+    const bankObj = apiBanks.find(b => getBankNameString(b) === selectedBank);
     const bankId = bankObj ? (bankObj.id || bankObj.code || bankObj.name) : selectedBank;
 
     const timer = setTimeout(() => {
@@ -1307,29 +1404,23 @@ export default function P2PPanel({ connected, walletTokenList }) {
   }, [liveSelectedToken, onrampNgnRate, displayOnrampAmount, parsedOnrampAmt]);
 
   const allBankNames = useMemo(() => {
-    return apiBanks.map(b => (typeof b === 'string' ? b : b.name || b.bank_name || ''));
+    return apiBanks.map(b => getBankNameString(b)).filter(Boolean);
   }, [apiBanks]);
 
   const filteredBanksList = useMemo(() => {
-    const query = bankSearch.toLowerCase().trim();
+    const query = bankSearch.trim();
     if (!query) return allBankNames;
-    const matches = allBankNames.filter(b => b.toLowerCase().includes(query));
-    return matches.sort((a, b) => {
-      const aLower = a.toLowerCase();
-      const bLower = b.toLowerCase();
 
-      const aExact = aLower === query;
-      const bExact = bLower === query;
-      if (aExact && !bExact) return -1;
-      if (!aExact && bExact) return 1;
+    const scored = [];
+    for (const b of allBankNames) {
+      const match = searchMatchesBank(b, query);
+      if (match.isMatch) {
+        scored.push({ name: b, score: match.score });
+      }
+    }
 
-      const aStarts = aLower.startsWith(query);
-      const bStarts = bLower.startsWith(query);
-      if (aStarts && !bStarts) return -1;
-      if (!aStarts && bStarts) return 1;
-
-      return aLower.localeCompare(bLower);
-    });
+    scored.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+    return scored.map(s => s.name);
   }, [allBankNames, bankSearch]);
 
   // Nigeria is the only live country; all others show "Coming Soon"
@@ -1829,7 +1920,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
         throw new Error(`Insufficient ${liveSelectedToken.symbol} balance. You have ${balance.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${liveSelectedToken.symbol} but need ${estCryptoAmount.toFixed(4)} ${liveSelectedToken.symbol}.`);
       }
 
-      const bankObj = apiBanks.find(b => (b.name || b.bank_name || b) === selectedBank);
+      const bankObj = apiBanks.find(b => getBankNameString(b) === selectedBank);
       const bankId = bankObj ? (bankObj.id || bankObj.code || bankObj.name) : selectedBank;
 
       // 1. Create paj_ramp off-ramp order
