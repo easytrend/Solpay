@@ -669,12 +669,15 @@ export default function P2PPanel({ connected, walletTokenList }) {
     }
 
     const key = publicKey.toBase58();
+    console.log('[Session] Wallet connected:', key.slice(0, 8), '— checking session...');
+
     const cachedToken  = localStorage.getItem(`paj_sessionToken_${key}`);
     const cachedEmail  = localStorage.getItem(`paj_sessionEmail_${key}`);
     const cachedExpiry = localStorage.getItem(`paj_sessionExpiry_${key}`);
 
     // ① Same device: restore from localStorage instantly (no network)
     if (cachedToken && cachedExpiry && Date.now() < Number(cachedExpiry)) {
+      console.log('[Session] Restored from localStorage (same device)');
       setSessionToken(cachedToken);
       setSessionEmail(cachedEmail || '');
       setAuthStep('logged_in');
@@ -687,11 +690,13 @@ export default function P2PPanel({ connected, walletTokenList }) {
     localStorage.removeItem(`paj_sessionExpiry_${key}`);
 
     // ② New / other device: fetch session from Supabase by wallet address
+    console.log('[Session] No localStorage cache — querying Supabase for wallet:', key.slice(0, 8));
     setAuthStep('checking');
     loadSession(key)
       .then(row => {
         if (row) {
           // Found a valid session in Supabase — auto-login, no email prompt
+          console.log('[Session] ✅ Supabase session found! Auto-logging in. Email:', row.email);
           const expiryMs = new Date(row.expires_at).getTime();
           setSessionToken(row.session_token);
           setSessionEmail(row.email);
@@ -703,13 +708,15 @@ export default function P2PPanel({ connected, walletTokenList }) {
           localStorage.setItem(`paj_sessionExpiry_${key}`, String(expiryMs));
         } else {
           // No session anywhere — show full email + OTP form
+          console.log('[Session] ❌ No Supabase session found — showing email/OTP form');
           setSessionToken('');
           setSessionEmail('');
           setAuthStep('input_email');
         }
       })
-      .catch(() => {
+      .catch((err) => {
         // Supabase unreachable — show form so user can verify manually
+        console.warn('[Session] ❌ Supabase query failed:', err?.message || err);
         setSessionToken('');
         setSessionEmail('');
         setAuthStep('input_email');

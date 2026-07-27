@@ -184,19 +184,33 @@ export async function syncP2PTransactionStatuses(orders = []) {
  */
 export async function saveSession(walletAddress, email, token, expiryMs) {
   if (!supabase || !walletAddress || !token) return;
+  const row = {
+    wallet_address: walletAddress,
+    email,
+    session_token: token,
+    expires_at: new Date(expiryMs).toISOString(),
+    updated_at: new Date().toISOString(),
+  };
   try {
-    // Delete any old session rows for this wallet to prevent duplicates
-    await supabase.from('paj_sessions').delete().eq('wallet_address', walletAddress);
+    // Strategy 1: upsert (works if wallet_address has a UNIQUE constraint)
+    const { error: upsertErr } = await supabase
+      .from('paj_sessions')
+      .upsert(row, { onConflict: 'wallet_address' });
 
-    // Insert fresh active session
-    const { error } = await supabase.from('paj_sessions').insert({
-      wallet_address: walletAddress,
-      email,
-      session_token: token,
-      expires_at: new Date(expiryMs).toISOString(),
-      updated_at: new Date().toISOString(),
-    });
-    if (error) console.warn('[Supabase] saveSession failed:', error.message);
+    if (!upsertErr) {
+      console.log('[Supabase] saveSession: upsert OK for', walletAddress.slice(0, 8));
+      return;
+    }
+    console.warn('[Supabase] saveSession: upsert failed, trying delete+insert:', upsertErr.message);
+
+    // Strategy 2: delete all old rows then insert fresh (works if NO unique constraint)
+    await supabase.from('paj_sessions').delete().eq('wallet_address', walletAddress);
+    const { error: insertErr } = await supabase.from('paj_sessions').insert(row);
+    if (insertErr) {
+      console.warn('[Supabase] saveSession: insert also failed:', insertErr.message);
+    } else {
+      console.log('[Supabase] saveSession: delete+insert OK for', walletAddress.slice(0, 8));
+    }
   } catch (err) {
     console.warn('[Supabase] saveSession error:', err.message);
   }
@@ -205,6 +219,7 @@ export async function saveSession(walletAddress, email, token, expiryMs) {
 /**
  * Load a PajCash session from Supabase for a given wallet address.
  * Returns the row object or null if not found / expired.
+ * Works regardless of whether 0, 1, or multiple rows exist for this wallet.
  *
  * @param {string} walletAddress - User's Solana public key (base58)
  * @returns {{ email: string, session_token: string, expires_at: string } | null}
@@ -212,6 +227,7 @@ export async function saveSession(walletAddress, email, token, expiryMs) {
 export async function loadSession(walletAddress) {
   if (!supabase || !walletAddress) return null;
   try {
+    // Use array query with limit(1) — never throws on 0 or multiple rows
     const { data, error } = await supabase
       .from('paj_sessions')
       .select('email, session_token, expires_at')
@@ -219,15 +235,25 @@ export async function loadSession(walletAddress) {
       .order('updated_at', { ascending: false })
       .limit(1);
 
-    if (error || !data || data.length === 0) return null;
+    if (error) {
+      console.warn('[Supabase] loadSession query error:', error.message);
+      return null;
+    }
+
+    if (!data || data.length === 0) {
+      console.log('[Supabase] loadSession: no session found for', walletAddress.slice(0, 8));
+      return null;
+    }
 
     const session = data[0];
 
     // Check if token has expired
     if (session.expires_at && new Date(session.expires_at).getTime() < Date.now()) {
+      console.log('[Supabase] loadSession: session expired for', walletAddress.slice(0, 8));
       return null;
     }
 
+    console.log('[Supabase] loadSession: session found for', walletAddress.slice(0, 8), '- auto-authenticating');
     return session;
   } catch (err) {
     console.warn('[Supabase] loadSession error:', err.message);
