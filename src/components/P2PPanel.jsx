@@ -2659,6 +2659,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
                       type="text"
                       placeholder="Search bank name..."
                       value={bankSearch}
+                      autoFocus
                       onChange={e => setBankSearch(e.target.value)}
                       style={{ width: '100%', padding: '6px 10px', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border)', borderRadius: '6px', color: 'white', fontSize: '12px', outline: 'none' }}
                     />
