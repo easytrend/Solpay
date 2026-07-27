@@ -2752,54 +2752,149 @@ export default function P2PPanel({ connected, walletTokenList }) {
               </div>
 
               {bankOpen && (
-                <div className="drop-menu" style={{ left: 0, right: 0, width: '100%' }} onClick={e => e.stopPropagation()}>
-                  <div style={{ padding: '8px', borderBottom: '1px solid var(--border)' }}>
-                    <input
-                      type="text"
-                      placeholder="Search bank name..."
-                      value={bankSearch}
-                      autoFocus
-                      onChange={e => setBankSearch(e.target.value)}
-                      style={{ width: '100%', padding: '6px 10px', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border)', borderRadius: '6px', color: 'white', fontSize: '12px', outline: 'none' }}
-                    />
-                  </div>
-                  <div ref={bankListScrollRef} style={{ maxHeight: '200px', overflowY: 'auto' }}>
-                    {filteredBanksList.map(b => {
-                      const meta = getBankMetadata(b);
-                      return (
-                        <div
-                          key={b}
-                          className={`drop-item ${selectedBank === b ? 'sel' : ''}`}
-                          onClick={() => { setSelectedBank(b); setBankOpen(false); setBankSearch(''); }}
-                          style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px' }}
-                        >
-                          {meta.logo ? (
-                            <img
-                              src={meta.logo} alt={meta.name}
-                              onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
-                              style={{ width: '22px', height: '22px', borderRadius: '50%', objectFit: 'cover' }}
-                          />
-                          ) : null}
+                <div
+                  style={{
+                    position: 'fixed',
+                    top: 0, left: 0, right: 0, bottom: 0,
+                    zIndex: 99999,
+                    background: 'rgba(0,0,0,0.75)',
+                    backdropFilter: 'blur(6px)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '16px',
+                  }}
+                  onClick={() => { setBankOpen(false); setBankSearch(''); }}
+                >
+                  <div
+                    style={{
+                      background: '#121722',
+                      border: '1px solid rgba(255,255,255,0.12)',
+                      borderRadius: '16px',
+                      width: '100%',
+                      maxWidth: '420px',
+                      maxHeight: '85vh',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      overflow: 'hidden',
+                      boxShadow: '0 20px 40px rgba(0,0,0,0.6)',
+                    }}
+                    onClick={e => e.stopPropagation()}
+                  >
+                    {/* Header */}
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '14px 16px',
+                        borderBottom: '1px solid rgba(255,255,255,0.08)',
+                      }}
+                    >
+                      <span style={{ fontSize: '15px', fontWeight: '600', color: 'white' }}>Select Bank</span>
+                      <button
+                        type="button"
+                        onClick={() => { setBankOpen(false); setBankSearch(''); }}
+                        style={{
+                          background: 'rgba(255,255,255,0.08)',
+                          border: 'none',
+                          color: 'rgba(255,255,255,0.6)',
+                          width: '28px',
+                          height: '28px',
+                          borderRadius: '50%',
+                          cursor: 'pointer',
+                          fontSize: '14px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    {/* Search Input */}
+                    <div style={{ padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          background: 'rgba(255,255,255,0.05)',
+                          border: '1px solid rgba(255,255,255,0.12)',
+                          borderRadius: '10px',
+                          padding: '8px 12px',
+                        }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.4)" strokeWidth="2.5">
+                          <circle cx="11" cy="11" r="8" />
+                          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                        </svg>
+                        <input
+                          type="text"
+                          placeholder="Search bank (e.g. Opay, GTB, Kuda...)"
+                          value={bankSearch}
+                          autoFocus
+                          onChange={e => setBankSearch(e.target.value)}
+                          style={{
+                            width: '100%',
+                            background: 'transparent',
+                            border: 'none',
+                            outline: 'none',
+                            color: 'white',
+                            fontSize: '13px',
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* List Container */}
+                    <div ref={bankListScrollRef} style={{ flex: 1, overflowY: 'auto', maxHeight: '340px', padding: '6px 0' }}>
+                      {filteredBanksList.map(b => {
+                        const meta = getBankMetadata(b);
+                        return (
                           <div
-                            className="bank-avatar"
+                            key={b}
+                            className={`drop-item ${selectedBank === b ? 'sel' : ''}`}
+                            onClick={() => { setSelectedBank(b); setBankOpen(false); setBankSearch(''); }}
                             style={{
-                              display: meta.logo ? 'none' : 'flex',
-                              width: '22px', height: '22px', borderRadius: '50%',
-                              background: meta.color, color: 'white', fontSize: '9px',
-                              fontWeight: 'bold', alignItems: 'center', justifyContent: 'center',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '12px',
+                              padding: '10px 16px',
+                              cursor: 'pointer',
                             }}
                           >
-                            {meta.initial}
+                            {meta.logo ? (
+                              <img
+                                src={meta.logo} alt={meta.name}
+                                onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
+                                style={{ width: '26px', height: '26px', borderRadius: '50%', objectFit: 'cover' }}
+                              />
+                            ) : null}
+                            <div
+                              className="bank-avatar"
+                              style={{
+                                display: meta.logo ? 'none' : 'flex',
+                                width: '26px', height: '26px', borderRadius: '50%',
+                                background: meta.color, color: 'white', fontSize: '10px',
+                                fontWeight: 'bold', alignItems: 'center', justifyContent: 'center',
+                              }}
+                            >
+                              {meta.initial}
+                            </div>
+                            <span style={{ fontSize: '13px', color: selectedBank === b ? 'var(--lime)' : 'white', fontWeight: selectedBank === b ? '600' : '400' }}>
+                              {b}
+                            </span>
                           </div>
-                          <span className="di-name" style={{ marginLeft: 0 }}>{b}</span>
+                        );
+                      })}
+                      {filteredBanksList.length === 0 && (
+                        <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.4)', fontStyle: 'italic', padding: '20px', textAlign: 'center' }}>
+                          {bankSearch ? `No banks matching "${bankSearch}"` : 'No banks found'}
                         </div>
-                      );
-                    })}
-                    {filteredBanksList.length === 0 && (
-                      <div style={{ fontSize: '11px', color: 'var(--text3)', fontStyle: 'italic', padding: '12px', textAlign: 'center' }}>
-                        No banks found
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
