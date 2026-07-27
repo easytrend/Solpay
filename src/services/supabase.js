@@ -185,18 +185,17 @@ export async function syncP2PTransactionStatuses(orders = []) {
 export async function saveSession(walletAddress, email, token, expiryMs) {
   if (!supabase || !walletAddress || !token) return;
   try {
-    const { error } = await supabase
-      .from('paj_sessions')
-      .upsert(
-        {
-          wallet_address: walletAddress,
-          email,
-          session_token: token,
-          expires_at: new Date(expiryMs).toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'wallet_address' }
-      );
+    // Delete any old session rows for this wallet to prevent duplicates
+    await supabase.from('paj_sessions').delete().eq('wallet_address', walletAddress);
+
+    // Insert fresh active session
+    const { error } = await supabase.from('paj_sessions').insert({
+      wallet_address: walletAddress,
+      email,
+      session_token: token,
+      expires_at: new Date(expiryMs).toISOString(),
+      updated_at: new Date().toISOString(),
+    });
     if (error) console.warn('[Supabase] saveSession failed:', error.message);
   } catch (err) {
     console.warn('[Supabase] saveSession error:', err.message);
@@ -217,16 +216,19 @@ export async function loadSession(walletAddress) {
       .from('paj_sessions')
       .select('email, session_token, expires_at')
       .eq('wallet_address', walletAddress)
-      .single();
+      .order('updated_at', { ascending: false })
+      .limit(1);
 
-    if (error || !data) return null;
+    if (error || !data || data.length === 0) return null;
+
+    const session = data[0];
 
     // Check if token has expired
-    if (data.expires_at && new Date(data.expires_at).getTime() < Date.now()) {
+    if (session.expires_at && new Date(session.expires_at).getTime() < Date.now()) {
       return null;
     }
 
-    return data;
+    return session;
   } catch (err) {
     console.warn('[Supabase] loadSession error:', err.message);
     return null;
