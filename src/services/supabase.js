@@ -222,9 +222,7 @@ export async function loadSession(walletAddress) {
     if (error || !data) return null;
 
     // Check if token has expired
-    if (new Date(data.expires_at).getTime() < Date.now()) {
-      // Clean up expired row silently
-      await supabase.from('paj_sessions').delete().eq('wallet_address', walletAddress);
+    if (data.expires_at && new Date(data.expires_at).getTime() < Date.now()) {
       return null;
     }
 

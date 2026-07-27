@@ -1137,12 +1137,14 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
     if (publicKey) {
       const key = publicKey.toBase58();
-      // Clear from localStorage (this device)
+      // Clear from localStorage (this device only)
       localStorage.removeItem(`paj_sessionToken_${key}`);
       localStorage.removeItem(`paj_sessionEmail_${key}`);
       localStorage.removeItem(`paj_sessionExpiry_${key}`);
-      // Clear from Supabase (all other devices)
-      deleteSession(key);
+      // NOTE: Do NOT call deleteSession(key) in Supabase here.
+      // Keeping the Supabase record ensures any device (Device 1, 2, 3, 4...)
+      // connecting with the same wallet address will automatically auto-authenticate
+      // and skip email OTP verification.
     }
   };
 
