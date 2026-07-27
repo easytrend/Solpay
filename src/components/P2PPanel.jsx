@@ -310,7 +310,6 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const [bankOpen, setBankOpen] = useState(false);
   const [tokenOpen, setTokenOpen] = useState(false);
   const [bankSearch, setBankSearch] = useState('');
-  const bankSearchRef = useRef(null);
   const [countrySearch, setCountrySearch] = useState('');
   const [tokenSearchQuery, setTokenSearchQuery] = useState('');
   const [tokenSearchResults, setTokenSearchResults] = useState([]);
@@ -2633,74 +2632,38 @@ export default function P2PPanel({ connected, walletTokenList }) {
               </div>
             </div>
 
-            {/* Bank selector — inline search triggers dropdown + filters live */}
+            {/* Bank selector — shown second */}
             <div className="field" style={{ position: 'relative' }}>
               <div className="field-label">Bank</div>
               <div
                 className="input-wrap"
-                style={{ justifyContent: 'space-between', opacity: canTransact ? 1 : 0.6, padding: '0 10px 0 0' }}
+                onClick={() => { if (canTransact) setBankOpen(!bankOpen); }}
+                style={{ cursor: canTransact ? 'pointer' : 'not-allowed', justifyContent: 'space-between', opacity: canTransact ? 1 : 0.6 }}
               >
                 {loadingBanks ? (
-                  <span style={{ fontSize: '12px', color: 'var(--text3)', fontStyle: 'italic', padding: '0 10px' }}>
+                  <span style={{ fontSize: '12px', color: 'var(--text3)', fontStyle: 'italic' }}>
                     <span className="p2p-mini-spinner" /> Loading banks...
                   </span>
                 ) : (
-                  <input
-                    ref={bankSearchRef}
-                    id="bank-search-input"
-                    type="text"
-                    placeholder={selectedBank !== 'Choose Bank' ? selectedBank : 'Search or choose bank...'}
-                    value={bankSearch}
-                    disabled={!canTransact}
-                    autoComplete="off"
-                    onChange={e => {
-                      setBankSearch(e.target.value);
-                      if (!bankOpen) setBankOpen(true);
-                    }}
-                    onFocus={() => { if (canTransact) { setBankOpen(true); setBankSearch(''); } }}
-                    style={{
-                      flex: 1,
-                      background: 'transparent',
-                      border: 'none',
-                      outline: 'none',
-                      color: bankSearch ? 'white' : (selectedBank !== 'Choose Bank' ? 'var(--text)' : 'var(--text3)'),
-                      fontSize: '14px',
-                      padding: '0 0 0 12px',
-                      cursor: canTransact ? 'text' : 'not-allowed',
-                      width: '100%',
-                    }}
-                  />
+                  <span style={{ color: selectedBank === 'Choose Bank' ? 'var(--text3)' : 'var(--text)' }}>
+                    {selectedBank}
+                  </span>
                 )}
-                <span
-                  style={{ color: 'var(--text3)', fontSize: '11px', cursor: 'pointer', flexShrink: 0 }}
-                  onClick={() => {
-                    if (!canTransact) return;
-                    if (bankOpen) {
-                      setBankOpen(false);
-                      setBankSearch('');
-                    } else {
-                      setBankOpen(true);
-                      setBankSearch('');
-                      setTimeout(() => bankSearchRef.current?.focus(), 50);
-                    }
-                  }}
-                >
-                  {bankOpen ? '▲' : '▼'}
-                </span>
+                <span style={{ color: 'var(--text3)', fontSize: '11px' }}>▼</span>
               </div>
 
               {bankOpen && (
-                <div
-                  className="drop-menu"
-                  style={{ left: 0, right: 0, width: '100%' }}
-                  onClick={e => e.stopPropagation()}
-                >
-                  <div style={{ maxHeight: '220px', overflowY: 'auto' }}>
-                    {filteredBanksList.length === 0 && (
-                      <div style={{ fontSize: '12px', color: 'var(--text3)', fontStyle: 'italic', padding: '14px', textAlign: 'center' }}>
-                        {bankSearch ? `No banks matching "${bankSearch}"` : 'No banks available'}
-                      </div>
-                    )}
+                <div className="drop-menu" style={{ left: 0, right: 0, width: '100%' }} onClick={e => e.stopPropagation()}>
+                  <div style={{ padding: '8px', borderBottom: '1px solid var(--border)' }}>
+                    <input
+                      type="text"
+                      placeholder="Search bank name..."
+                      value={bankSearch}
+                      onChange={e => setBankSearch(e.target.value)}
+                      style={{ width: '100%', padding: '6px 10px', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border)', borderRadius: '6px', color: 'white', fontSize: '12px', outline: 'none' }}
+                    />
+                  </div>
+                  <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
                     {filteredBanksList.map(b => {
                       const meta = getBankMetadata(b);
                       return (
@@ -2715,7 +2678,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
                               src={meta.logo} alt={meta.name}
                               onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
                               style={{ width: '22px', height: '22px', borderRadius: '50%', objectFit: 'cover' }}
-                            />
+                          />
                           ) : null}
                           <div
                             className="bank-avatar"
@@ -2732,6 +2695,11 @@ export default function P2PPanel({ connected, walletTokenList }) {
                         </div>
                       );
                     })}
+                    {filteredBanksList.length === 0 && (
+                      <div style={{ fontSize: '11px', color: 'var(--text3)', fontStyle: 'italic', padding: '12px', textAlign: 'center' }}>
+                        No banks found
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
