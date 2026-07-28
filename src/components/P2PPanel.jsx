@@ -2059,33 +2059,85 @@ export default function P2PPanel({ connected, walletTokenList }) {
       const sim = await connection.simulateTransaction(transaction);
       if (sim.value.err) throw new Error(`Simulation failed: ${JSON.stringify(sim.value.err)}`);
 
-      // 6. Sign & send
+      // 6. Sign & send (with automatic fallback to user fee-payer if relayer is unfunded/0 SOL)
       let sig;
       if (usingRelayer && signTransaction) {
-        // User signs the transaction — since feePayer = relayerPublicKey (not user),
-        // the wallet shows ZERO fees to the user.
-        const signedTx = await signTransaction(transaction);
+        try {
+          // User signs the transaction — since feePayer = relayerPublicKey (not user),
+          // the wallet shows ZERO fees to the user.
+          const signedTx = await signTransaction(transaction);
 
-        // Serialize the user-signed tx and POST it to the secure server-side relay endpoint.
-        // The server loads RELAYER_SECRET_KEY, adds the relayer's signature, and broadcasts.
-        const serialized = Buffer.from(
-          signedTx.serialize({ requireAllSignatures: false })
-        ).toString('base64');
+          // Serialize the user-signed tx and POST it to the secure server-side relay endpoint.
+          const serialized = Buffer.from(
+            signedTx.serialize({ requireAllSignatures: false })
+          ).toString('base64');
 
-        const relayRes = await fetch('/api/relay', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ serializedTransaction: serialized }),
-        });
+          const relayRes = await fetch('/api/relay', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ serializedTransaction: serialized }),
+          });
 
-        if (!relayRes.ok) {
-          const errData = await relayRes.json().catch(() => ({}));
-          throw new Error(errData.error || `Relay API failed: ${relayRes.status}`);
+          if (!relayRes.ok) {
+            const errData = await relayRes.json().catch(() => ({}));
+            throw new Error(errData.error || `Relay API failed: ${relayRes.status}`);
+          }
+
+          const { signature } = await relayRes.json();
+          sig = signature;
+          setRelayerActive(true);
+        } catch (relayErr) {
+          console.warn('[Relayer Fallback] Gasless relay failed or unfunded:', relayErr.message);
+
+          // Re-build transaction with user as feePayer (user settles gas fee)
+          const fallbackTx = new Transaction();
+          fallbackTx.feePayer = publicKey;
+          fallbackTx.recentBlockhash = (await connection.getLatestBlockhash('confirmed')).blockhash;
+
+          if (liveSelectedToken.symbol === 'SOL') {
+            const lamports = Math.round((order.amount || estCryptoAmount) * 1e9);
+            fallbackTx.add(SystemProgram.transfer({ fromPubkey: publicKey, toPubkey: depositPubkey, lamports }));
+          } else {
+            const mintPubkey = new PublicKey(liveSelectedToken.mint);
+            let tokenProgram = TOKEN_PROGRAM_ID;
+            if (liveSelectedToken.tokenProgramOverride === 'token2022') {
+              tokenProgram = TOKEN_2022_PROGRAM_ID;
+            } else {
+              try {
+                const mintAcct = await connection.getAccountInfo(mintPubkey);
+                if (mintAcct?.owner.equals(TOKEN_2022_PROGRAM_ID)) tokenProgram = TOKEN_2022_PROGRAM_ID;
+              } catch {}
+            }
+            const senderATA = getAssociatedTokenAddressSync(mintPubkey, publicKey, false, tokenProgram);
+            const receiverATA = getAssociatedTokenAddressSync(mintPubkey, depositPubkey, false, tokenProgram);
+            const sendAmount = order.amount || estCryptoAmount;
+            let decimals = typeof liveSelectedToken.decimals === 'number' ? liveSelectedToken.decimals : 6;
+            const units = BigInt(Math.round(sendAmount * Math.pow(10, decimals)));
+
+            fallbackTx.add(
+              createAssociatedTokenAccountIdempotentInstruction(
+                publicKey, receiverATA, depositPubkey, mintPubkey, tokenProgram
+              )
+            );
+            fallbackTx.add(
+              createTransferCheckedInstruction(
+                senderATA, mintPubkey, receiverATA, publicKey, units, decimals, [], tokenProgram
+              )
+            );
+          }
+
+          fallbackTx.add(
+            new TransactionInstruction({
+              keys: [],
+              programId: MEMO_PROGRAM_ID,
+              data: new TextEncoder().encode(`fiatwallet:pajcash:offramp:${order.id}`),
+            })
+          );
+
+          // Prompt user wallet to sign & pay network gas fee
+          sig = await sendTransaction(fallbackTx, connection);
+          setRelayerActive(false);
         }
-
-        const { signature } = await relayRes.json();
-        sig = signature;
-        setRelayerActive(true);
       } else {
         // No relayer — user pays gas normally
         sig = await sendTransaction(transaction, connection);
