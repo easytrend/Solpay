@@ -20,6 +20,7 @@ import Toast from './components/Toast';
 import FloatClaimWidget from './components/FloatClaimWidget';
 import SwapWidget from './components/SwapWidget';
 import P2PPanel from './components/P2PPanel';
+import SupportChat from './components/SupportChat';
 import { logTransaction } from './services/supabase';
 
 
@@ -1282,6 +1283,9 @@ export default function App() {
       {showGamesPanel && (
         <GamesPanel onClose={() => setShowGamesPanel(false)} />
       )}
+
+      {/* Floating Support Chat */}
+      <SupportChat />
     </div>
   );
 }
