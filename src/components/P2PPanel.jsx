@@ -960,7 +960,9 @@ export default function P2PPanel({ connected, walletTokenList }) {
         }
       });
 
-      // 3. If live session token exists, fetch API history from PajCash to get latest statuses
+      // 3. If live session token exists, sync latest status from PajCash API
+      // ONLY update existing orders belonging to this wallet address.
+      // Do NOT add unmatched API orders, as PajCash returns global platform orders.
       if (sessionToken) {
         try {
           const res = await getTransactionHistory(sessionToken);
@@ -972,7 +974,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
             apiTxs.forEach(apiTx => {
               const apiId = String(apiTx.id || apiTx._id || apiTx.orderId || '');
               const apiSig = String(apiTx.signature || apiTx.txHash || apiTx.tx_hash || '');
-              const matchKey = Array.from(txMap.keys()).find(k => k === apiId || (apiSig && k === apiSig));
+              const matchKey = Array.from(txMap.keys()).find(k => (apiId && k === apiId) || (apiSig && k === apiSig));
 
               if (matchKey) {
                 const existing = txMap.get(matchKey);
@@ -982,21 +984,6 @@ export default function P2PPanel({ connected, walletTokenList }) {
                   bankName: apiTx.bankName || apiTx.bank_name || existing.bankName,
                   accountNumber: apiTx.accountNumber || apiTx.account_number || existing.accountNumber,
                   accountName: apiTx.accountName || apiTx.account_name || existing.accountName,
-                });
-              } else if (apiId || apiSig) {
-                txMap.set(apiId || apiSig, {
-                  id: apiId,
-                  signature: apiSig,
-                  type: apiTx.type || 'offramp',
-                  tokenSymbol: apiTx.tokenSymbol || apiTx.symbol || 'USDC',
-                  cryptoAmount: apiTx.cryptoAmount || apiTx.amount || 0,
-                  fiatAmount: apiTx.fiatAmount || apiTx.nairaAmount || 0,
-                  fiatCurrency: 'NGN',
-                  status: apiTx.status || 'PENDING',
-                  bankName: apiTx.bankName || apiTx.bank_name,
-                  accountNumber: apiTx.accountNumber || apiTx.account_number,
-                  accountName: apiTx.accountName || apiTx.account_name,
-                  createdAt: apiTx.createdAt || apiTx.created_at || new Date().toISOString(),
                 });
               }
             });
