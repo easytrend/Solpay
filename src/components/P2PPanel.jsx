@@ -3027,24 +3027,14 @@ export default function P2PPanel({ connected, walletTokenList }) {
                   </div>
                 </div>
 
-                {/* ── Estimated display with 1% fee note ── */}
+                {/* ── Input Mode Toggle & Routing Indicator ── */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <span className="amount-converted" style={{ fontSize: '12px', color: 'rgba(255,255,255,0.38)', fontFamily: 'var(--ff)' }}>
-                      {routingState === 'routing' || routingState === 'loading_market' ? (
-                        <span style={{ color: 'rgba(255,255,255,0.38)', fontStyle: 'italic' }}>
-                          <span className="p2p-mini-spinner" /> Routing...
-                        </span>
-                      ) : (
-                        amount && Number(amount) > 0
-                          ? (offrampInputMode === 'crypto' 
-                               ? `≈ ${selectedCountry.symbol}${parsedAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` 
-                               : `≈ ${estCryptoAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} ${liveSelectedToken.symbol}`)
-                          : (offrampInputMode === 'crypto' 
-                               ? `≈ ${selectedCountry.symbol}0.00` 
-                               : `≈ ${liveSelectedToken.symbol}`)
-                      )}
-                    </span>
+                    {(routingState === 'routing' || routingState === 'loading_market') && (
+                      <span className="amount-converted" style={{ fontSize: '12px', color: 'rgba(255,255,255,0.38)', fontFamily: 'var(--ff)', fontStyle: 'italic' }}>
+                        <span className="p2p-mini-spinner" /> Routing...
+                      </span>
+                    )}
                     <div className="input-mode-toggle">
                       <button type="button" className={`imt-btn ${offrampInputMode === 'fiat' ? 'active' : ''}`} onClick={() => setOfframpInputMode('fiat')}>{selectedCountry.code}</button>
                       <button type="button" className={`imt-btn ${offrampInputMode === 'crypto' ? 'active' : ''}`} onClick={() => setOfframpInputMode('crypto')}>{liveSelectedToken.symbol}</button>
@@ -3362,19 +3352,9 @@ export default function P2PPanel({ connected, walletTokenList }) {
                 </div>
               </div>
 
-              {/* Bottom Row of block: Estimation preview */}
+              {/* Bottom Row of block: Mode toggle */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '10px', marginTop: '8px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <span className="amount-converted" style={{ fontSize: '12px', color: 'rgba(255,255,255,0.38)', fontFamily: 'var(--ff)' }}>
-                    {parsedOnrampAmt > 0
-                      ? (onrampInputMode === 'crypto'
-                           ? `≈ ${selectedCountry.symbol}${parsedOnrampAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                           : `≈ ${displayOnrampAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} ${liveSelectedToken.symbol}`)
-                      : (onrampInputMode === 'crypto'
-                           ? `≈ ${selectedCountry.symbol}0.00`
-                           : `≈ ${liveSelectedToken.symbol}`)
-                    }
-                  </span>
                   <div className="input-mode-toggle">
                     <button type="button" className={`imt-btn ${onrampInputMode === 'fiat' ? 'active' : ''}`} onClick={() => setOnrampInputMode('fiat')}>{selectedCountry.code}</button>
                     <button type="button" className={`imt-btn ${onrampInputMode === 'crypto' ? 'active' : ''}`} onClick={() => setOnrampInputMode('crypto')}>{liveSelectedToken.symbol}</button>
