@@ -3153,7 +3153,10 @@ export default function P2PPanel({ connected, walletTokenList }) {
                 : (!isLiveRoute || apiError
                   ? 'Payout Gateway Offline'
                   : (amount && Number(amount) > 0 && baseCryptoAmount > 0
-                    ? `SEND ${baseCryptoAmount.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 6 })} ${liveSelectedToken.symbol}`
+                    ? (offrampInputMode === 'crypto'
+                        ? `SEND ${selectedCountry.symbol}${parsedAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                        : `SEND ${baseCryptoAmount.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 6 })} ${liveSelectedToken.symbol}`
+                      )
                     : 'Send'
                   )
                 )}
