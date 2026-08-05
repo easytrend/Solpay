@@ -3036,8 +3036,34 @@ export default function P2PPanel({ connected, walletTokenList }) {
                       </span>
                     )}
                     <div className="input-mode-toggle">
-                      <button type="button" className={`imt-btn ${offrampInputMode === 'fiat' ? 'active' : ''}`} onClick={() => setOfframpInputMode('fiat')}>{selectedCountry.code}</button>
-                      <button type="button" className={`imt-btn ${offrampInputMode === 'crypto' ? 'active' : ''}`} onClick={() => setOfframpInputMode('crypto')}>{liveSelectedToken.symbol}</button>
+                      <button
+                        type="button"
+                        className={`imt-btn ${offrampInputMode === 'fiat' ? 'active' : ''}`}
+                        onClick={() => {
+                          if (offrampInputMode !== 'fiat') {
+                            setOfframpInputMode('fiat');
+                            if (amount && Number(amount) > 0 && ngnRate > 0) {
+                              setAmount((Number(amount) * ngnRate).toFixed(2));
+                            }
+                          }
+                        }}
+                      >
+                        {selectedCountry.code}
+                      </button>
+                      <button
+                        type="button"
+                        className={`imt-btn ${offrampInputMode === 'crypto' ? 'active' : ''}`}
+                        onClick={() => {
+                          if (offrampInputMode !== 'crypto') {
+                            setOfframpInputMode('crypto');
+                            if (amount && Number(amount) > 0 && ngnRate > 0) {
+                              setAmount((Number(amount) / ngnRate).toFixed(4));
+                            }
+                          }
+                        }}
+                      >
+                        {liveSelectedToken.symbol}
+                      </button>
                     </div>
                   </div>
 
@@ -3047,8 +3073,14 @@ export default function P2PPanel({ connected, walletTokenList }) {
                       <button
                         type="button"
                         onClick={() => {
-                          const fiatMax = liveSelectedToken.balance * ngnRate;
-                          setAmount(fiatMax.toFixed(2));
+                          const feeInToken = tokenPriceUsd > 0 ? PLATFORM_FEE_USD / tokenPriceUsd : 0.10;
+                          const maxCrypto = Math.max(0, (liveSelectedToken.balance || 0) - feeInToken);
+                          if (offrampInputMode === 'crypto') {
+                            setAmount(maxCrypto > 0 ? maxCrypto.toFixed(4) : '0');
+                          } else {
+                            const maxFiat = maxCrypto * ngnRate;
+                            setAmount(maxFiat > 0 ? maxFiat.toFixed(2) : '0');
+                          }
                         }}
                         disabled={!canTransact}
                         style={{
