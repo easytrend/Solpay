@@ -3462,6 +3462,40 @@ export default function P2PPanel({ connected, walletTokenList }) {
                 </span>
               </div>
             )}
+
+            {/* ── You will receive — token quantity preview ── */}
+            {parsedOnrampAmt > 0 && displayOnrampAmount > 0 && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                background: 'rgba(163,230,53,0.06)',
+                border: '1px solid rgba(163,230,53,0.18)',
+                borderRadius: '12px',
+                padding: '10px 14px',
+                marginTop: '4px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {liveSelectedToken.logoURI ? (
+                    <img src={liveSelectedToken.logoURI} alt={liveSelectedToken.symbol}
+                      style={{ width: '22px', height: '22px', borderRadius: '50%' }} />
+                  ) : (
+                    <div style={{ width: '22px', height: '22px', borderRadius: '50%', background: 'rgba(163,230,53,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: '700', color: 'var(--lime)' }}>
+                      {liveSelectedToken.symbol.slice(0, 2)}
+                    </div>
+                  )}
+                  <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.55)' }}>You will receive</span>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <span style={{ fontSize: '16px', fontWeight: '700', color: 'var(--lime)', fontFamily: 'var(--mono)' }}>
+                    {displayOnrampAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}
+                  </span>
+                  <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.55)', marginLeft: '4px' }}>
+                    {liveSelectedToken.symbol}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Session notice if not yet logged in */}
