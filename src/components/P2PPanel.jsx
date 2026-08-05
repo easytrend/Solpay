@@ -19,7 +19,7 @@ import {
   getTransaction,
 } from '../services/pajcashService';
 import { getQuote, buildSwapTransaction } from '../services/swapService';
-import { logP2PTransaction, syncP2PTransactionStatuses, updateP2PTransactionStatus, saveSession, loadSession, deleteSession, getP2PTransactionIdsByUser } from '../services/supabase';
+import { logP2PTransaction, syncP2PTransactionStatuses, updateP2PTransactionStatus, saveSession, loadSession, deleteSession, getP2PTransactionIdsByUser, getP2PTransactionsByUser } from '../services/supabase';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { PublicKey, Transaction, TransactionInstruction, SystemProgram, VersionedTransaction } from '@solana/web3.js';
 import {
@@ -898,53 +898,122 @@ export default function P2PPanel({ connected, walletTokenList }) {
     return () => { cancelled = true; clearInterval(interval); };
   }, [isLiveRoute]);
 
-  // ── Load payout history ──────────────────────────────────────────────────
+  // ── Load payout history (Permanent Supabase History + PajCash Live Sync) ──
   const loadPayoutLogs = async () => {
-    if (!sessionToken || !publicKey) return;
+    if (!publicKey) return;
     setLoadingLogs(true);
     setLogError(null);
     try {
       const walletKey = publicKey.toBase58();
 
-      // 1. Fetch user's orders from Supabase for filtering broadcast issues
-      const { orderIds: userOrderIds, signatures: userSignatures } = await getP2PTransactionIdsByUser(walletKey);
+      // 1. Fetch user's permanent transaction history from Supabase
+      const supabaseTxs = await getP2PTransactionsByUser(walletKey);
 
-      // Add local order IDs to ensure local fallbacks aren't filtered out
+      // Map Supabase rows to standard UI fields
+      const formattedSupabaseTxs = supabaseTxs.map(row => ({
+        id: row.order_id || row.id,
+        orderId: row.order_id,
+        signature: row.signature,
+        type: row.transaction_type || 'offramp',
+        tokenSymbol: row.token_symbol || 'USDC',
+        cryptoAmount: row.crypto_amount,
+        amount: row.crypto_amount,
+        fiatAmount: row.fiat_amount,
+        fiatCurrency: row.fiat_currency || 'NGN',
+        status: row.status || 'PENDING',
+        bankName: row.bank_name,
+        accountNumber: row.account_number,
+        accountName: row.account_name,
+        createdAt: row.created_at,
+        created_at: row.created_at,
+      }));
+
+      // Map by ID and signature for quick lookup & merging
+      const txMap = new Map();
+      formattedSupabaseTxs.forEach(t => {
+        const key = t.id || t.signature;
+        if (key) txMap.set(String(key), t);
+      });
+
+      // 2. Also check local storage for any pending unconfirmed orders
       const localOrders = (() => {
         try { return JSON.parse(localStorage.getItem(`paj_user_orders_${walletKey}`) || '[]'); }
         catch { return []; }
       })();
       localOrders.forEach(o => {
-        const id = o.id || o;
-        if (id) userOrderIds.add(String(id));
-        if (o.sig) userSignatures.add(String(o.sig));
+        const id = String(o.id || o);
+        if (id && !txMap.has(id)) {
+          txMap.set(id, {
+            id,
+            signature: o.sig || null,
+            type: o.type || 'offramp',
+            tokenSymbol: o.tokenSymbol || 'USDC',
+            cryptoAmount: o.cryptoAmount || o.amount || 0,
+            fiatAmount: o.fiatAmount || 0,
+            fiatCurrency: 'NGN',
+            status: o.status || 'PENDING',
+            bankName: o.bankName,
+            accountNumber: o.accountNumber,
+            accountName: o.accountName,
+            createdAt: o.createdAt || new Date().toISOString(),
+          });
+        }
       });
 
-      // 2. Fetch history from PajCash API
-      const res = await getTransactionHistory(sessionToken);
-      let txs = res;
-      if (res && !Array.isArray(res)) {
-        txs = res.data || res.transactions || res.items || res.result || [];
+      // 3. If live session token exists, fetch API history from PajCash to get latest statuses
+      if (sessionToken) {
+        try {
+          const res = await getTransactionHistory(sessionToken);
+          let apiTxs = res;
+          if (res && !Array.isArray(res)) {
+            apiTxs = res.data || res.transactions || res.items || res.result || [];
+          }
+          if (Array.isArray(apiTxs)) {
+            apiTxs.forEach(apiTx => {
+              const apiId = String(apiTx.id || apiTx._id || apiTx.orderId || '');
+              const apiSig = String(apiTx.signature || apiTx.txHash || apiTx.tx_hash || '');
+              const matchKey = Array.from(txMap.keys()).find(k => k === apiId || (apiSig && k === apiSig));
+
+              if (matchKey) {
+                const existing = txMap.get(matchKey);
+                txMap.set(matchKey, {
+                  ...existing,
+                  status: apiTx.status || existing.status,
+                  bankName: apiTx.bankName || apiTx.bank_name || existing.bankName,
+                  accountNumber: apiTx.accountNumber || apiTx.account_number || existing.accountNumber,
+                  accountName: apiTx.accountName || apiTx.account_name || existing.accountName,
+                });
+              } else if (apiId || apiSig) {
+                txMap.set(apiId || apiSig, {
+                  id: apiId,
+                  signature: apiSig,
+                  type: apiTx.type || 'offramp',
+                  tokenSymbol: apiTx.tokenSymbol || apiTx.symbol || 'USDC',
+                  cryptoAmount: apiTx.cryptoAmount || apiTx.amount || 0,
+                  fiatAmount: apiTx.fiatAmount || apiTx.nairaAmount || 0,
+                  fiatCurrency: 'NGN',
+                  status: apiTx.status || 'PENDING',
+                  bankName: apiTx.bankName || apiTx.bank_name,
+                  accountNumber: apiTx.accountNumber || apiTx.account_number,
+                  accountName: apiTx.accountName || apiTx.account_name,
+                  createdAt: apiTx.createdAt || apiTx.created_at || new Date().toISOString(),
+                });
+              }
+            });
+          }
+        } catch (apiErr) {
+          console.warn('PajCash live history sync notice:', apiErr.message);
+        }
       }
-      if (!Array.isArray(txs)) txs = [];
 
-      // 3. Filter PajCash history so it doesn't broadcast all users' orders
-      const filteredTxs = txs.filter(tx => {
-        const id = tx.id || tx._id || tx.orderId;
-        if (id && userOrderIds.has(String(id))) return true;
-        const sig = tx.signature || tx.txHash || tx.tx_hash;
-        if (sig && userSignatures.has(String(sig))) return true;
-        return false;
-      });
+      const allMergedTxs = Array.from(txMap.values());
+      allMergedTxs.sort((a, b) => new Date(b.createdAt || b.created_at || 0) - new Date(a.createdAt || a.created_at || 0));
 
-      syncP2PTransactionStatuses(filteredTxs);
-      setPayoutLogs(filteredTxs);
+      syncP2PTransactionStatuses(allMergedTxs);
+      setPayoutLogs(allMergedTxs);
     } catch (e) {
       console.warn('Could not load payout history:', e);
       setLogError(e.message || 'Failed to load history.');
-      if (e.message?.toLowerCase().includes('session') || e.message?.toLowerCase().includes('expired') || e.message?.toLowerCase().includes('unauthorized') || e.message?.toLowerCase().includes('invalid token')) {
-        handleLogoutSession();
-      }
     } finally {
       setLoadingLogs(false);
     }

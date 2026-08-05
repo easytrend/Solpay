@@ -304,3 +304,27 @@ export async function getP2PTransactionIdsByUser(walletAddress) {
   }
 }
 
+/**
+ * Get all full P2P transaction records associated with a specific user's wallet address.
+ */
+export async function getP2PTransactionsByUser(walletAddress) {
+  if (!supabase || !walletAddress) return [];
+  try {
+    const { data, error } = await supabase
+      .from('p2p_transactions')
+      .select('*')
+      .eq('user_address', walletAddress)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.warn('[Supabase] getP2PTransactionsByUser failed:', error.message);
+      return [];
+    }
+
+    return data || [];
+  } catch (err) {
+    console.warn('[Supabase] getP2PTransactionsByUser error:', err.message);
+    return [];
+  }
+}
+
