@@ -2355,7 +2355,9 @@ export default function P2PPanel({ connected, walletTokenList }) {
           </button>
         )}
       </div>
-      <p className="card-sub" style={{ marginBottom: '1.25rem' }}>Peer-to-peer token trading platform.</p>
+      <p className="card-sub" style={{ marginBottom: '1.25rem' }}>
+        {mode === 'sell' ? 'Send money to any Bank account.' : 'Receive money from any Bank account.'}
+      </p>
 
       {showHistoryView ? (
         <div className="p2p-history-view" style={{ animation: 'fadeIn 0.2s ease-in-out' }}>

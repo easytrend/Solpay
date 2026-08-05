@@ -1148,7 +1148,6 @@ export default function App() {
                       </div>
                     </div>
                     <div style={{display:'flex',alignItems:'center',gap:8}}>
-                      {!bulkMode && <span className="tok-equiv">≈ {dispTok} {tokLive.symbol}</span>}
                       <span className="tok-chevron">›</span>
                     </div>
                   </>
@@ -1174,6 +1173,7 @@ export default function App() {
                 ⚠️ Rate data may be stale — send button disabled until rates refresh.
               </div>
             )}
+
             {tokLive && (
               <div className="rate-badge" style={{marginBottom:'0.75rem'}}>
                 <span className="rate-dot" />
