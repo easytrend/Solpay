@@ -958,9 +958,9 @@ export default function P2PPanel({ connected, walletTokenList }) {
       .finally(() => setLoadingBanks(false));
   }, [isLiveRoute, PAJCASH_API_KEY]);
 
-  // ── Load rates ────────────────────────────────────────────────────────────
+  // ── Load rates (Both Onramp & Offramp) ──────────────────────────────────
   useEffect(() => {
-    if (!isLiveRoute) return;
+    if (!LIVE_CURRENCIES.has(selectedCountry.currency)) return;
     let cancelled = false;
 
     const fetchRates = () => {
@@ -972,9 +972,9 @@ export default function P2PPanel({ connected, walletTokenList }) {
     };
 
     fetchRates();
-    const interval = setInterval(fetchRates, 30_000);
+    const interval = setInterval(fetchRates, 15_000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [isLiveRoute]);
+  }, [selectedCountry.currency]);
 
   // ── Load payout history (Permanent Supabase History + PajCash Live Sync) ──
   const loadPayoutLogs = async () => {
@@ -3521,13 +3521,16 @@ export default function P2PPanel({ connected, walletTokenList }) {
             </div>
 
             {/* Exchange rate + service fee — shown below Amount input block */}
-            {pajRates?.onRampRate?.rate && (
-              <div style={{ marginTop: '6px', fontSize: '11px' }}>
-                <span style={{ color: 'rgba(255,255,255,0.38)' }}>
-                  1 {liveSelectedToken.symbol} ≈ {selectedCountry.symbol}{displayOnrampRate.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            <div style={{ marginTop: '6px', fontSize: '11px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ color: 'rgba(255,255,255,0.6)', fontWeight: '500' }}>
+                1 {liveSelectedToken.symbol} ≈ {selectedCountry.symbol}{displayOnrampRate.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+              {pajRates?.onRampRate?.rate && liveSelectedToken.symbol !== 'USDC' && liveSelectedToken.symbol !== 'USDT' && (
+                <span style={{ color: 'rgba(255,255,255,0.38)', fontSize: '10px' }}>
+                  (PajCash rate: {selectedCountry.symbol}{pajRates.onRampRate.rate.toLocaleString(undefined, { minimumFractionDigits: 2 })}/USD)
                 </span>
-              </div>
-            )}
+              )}
+            </div>
 
             {/* ── You will receive — token quantity preview ── */}
             {parsedOnrampAmt > 0 && displayOnrampAmount > 0 && (
