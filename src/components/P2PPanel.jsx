@@ -783,14 +783,17 @@ export default function P2PPanel({ connected, walletTokenList }) {
   // ── Dynamic Quote for non-native tokens ──────────────────────────────────
   useEffect(() => {
     const onrampNgnRate = pajRates?.onRampRate?.rate || pajRates?.rate || 1500;
+    const tokenPriceUsd = liveSelectedToken.price || (liveSelectedToken.symbol === 'SOL' ? 145.20 : 1.00);
+    const onrampNgnTokenRate = tokenPriceUsd * onrampNgnRate;
+
     const parsedOnrampAmtRaw = parseFloat(onrampAmount) || 0;
-    const parsedOnrampAmt = onrampInputMode === 'crypto' ? parsedOnrampAmtRaw * onrampNgnRate : parsedOnrampAmtRaw;
+    const parsedOnrampAmt = onrampInputMode === 'crypto' ? parsedOnrampAmtRaw * onrampNgnTokenRate : parsedOnrampAmtRaw;
     
-    if (mode === 'buy' && parsedOnrampAmt > 0 && selectedToken && selectedToken.symbol !== 'USDC' && selectedToken.symbol !== 'USDT') {
+    if (mode === 'buy' && parsedOnrampAmt > 0 && liveSelectedToken && liveSelectedToken.symbol !== 'USDC' && liveSelectedToken.symbol !== 'USDT') {
       const fetchJupiterQuote = async () => {
         try {
-          const usdcAmount = onrampInputMode === 'fiat' ? Math.max(0, parsedOnrampAmt / onrampNgnRate) : parsedOnrampAmtRaw;
-          const amountLamports = Math.floor(usdcAmount * 1_000_000); // USDC has 6 decimals
+          const grossUsdc = Math.max(0, parsedOnrampAmt / onrampNgnRate);
+          const amountLamports = Math.floor(grossUsdc * 1_000_000); // USDC has 6 decimals
           
           if (amountLamports <= 0) {
              setJupiterQuote(null);
@@ -799,7 +802,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
           const quote = await getQuote({
             inputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
-            outputMint: selectedToken.mint,
+            outputMint: liveSelectedToken.mint,
             amount: amountLamports,
             slippageBps: 100 // 1%
           });
@@ -810,12 +813,12 @@ export default function P2PPanel({ connected, walletTokenList }) {
         }
       };
       
-      const timer = setTimeout(fetchJupiterQuote, 500);
+      const timer = setTimeout(fetchJupiterQuote, 250);
       return () => clearTimeout(timer);
     } else {
       setJupiterQuote(null);
     }
-  }, [mode, onrampAmount, selectedToken, pajRates]);
+  }, [mode, onrampAmount, onrampInputMode, liveSelectedToken, pajRates]);
 
   // ── Live PajCash Onramp Estimate (accounts for PajCash's own fees) ────────
   // getOnrampValue() returns the EXACT net USDC PajCash will deposit after their
@@ -825,9 +828,12 @@ export default function P2PPanel({ connected, walletTokenList }) {
     if (mode !== 'buy') { setPajcashNetUsdc(null); return; }
 
     const onrampNgnRate = pajRates?.onRampRate?.rate || pajRates?.rate || 1500;
+    const tokenPriceUsd = liveSelectedToken.price || (liveSelectedToken.symbol === 'SOL' ? 145.20 : 1.00);
+    const onrampNgnTokenRate = tokenPriceUsd * onrampNgnRate;
+
     const parsedOnrampAmtRaw = parseFloat(onrampAmount) || 0;
     const fiatAmt = onrampInputMode === 'crypto'
-      ? parsedOnrampAmtRaw * onrampNgnRate
+      ? parsedOnrampAmtRaw * onrampNgnTokenRate
       : parsedOnrampAmtRaw;
 
     if (fiatAmt <= 0 || !sessionToken) {
@@ -841,15 +847,13 @@ export default function P2PPanel({ connected, walletTokenList }) {
     const timer = setTimeout(async () => {
       try {
         const result = await getOnrampValue({ currency: 'NGN', amount: fiatAmt }, sessionToken);
-        // PajCash returns: { value: number, rate: number } or similar shapes — handle all
         const netUsdc = result?.value ?? result?.usdcValue ?? result?.amount ?? null;
         const rate = result?.rate ?? result?.tokenRate ?? null;
         if (typeof netUsdc === 'number' && netUsdc > 0) {
           setPajcashNetUsdc(netUsdc);
         } else {
-          setPajcashNetUsdc(null); // fallback to naive estimate
+          setPajcashNetUsdc(null);
         }
-        // Store PajCash's exchange rate for precise fee USDC conversion
         if (typeof rate === 'number' && rate > 0) {
           setPajcashOnrampRate(rate);
         }
@@ -857,10 +861,10 @@ export default function P2PPanel({ connected, walletTokenList }) {
         console.warn('getOnrampValue failed, using fallback estimate:', e.message);
         setPajcashNetUsdc(null);
       }
-    }, 600);
+    }, 350);
 
     return () => clearTimeout(timer);
-  }, [mode, onrampAmount, onrampInputMode, sessionToken, pajRates]);
+  }, [mode, onrampAmount, onrampInputMode, sessionToken, pajRates, liveSelectedToken]);
 
   // ── Load banks ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1451,37 +1455,40 @@ export default function P2PPanel({ connected, walletTokenList }) {
     : (parseFloat(onrampAmount) || 0)) * tokenPriceUsd;
   const onrampBelowMinimum = (parseFloat(onrampAmount) || 0) > 0 && onrampGrossValueUsd < ONRAMP_MIN_USD;
 
+  const onrampNgnTokenRate = tokenPriceUsd * onrampNgnRate;
   const parsedOnrampAmtRaw = parseFloat(onrampAmount) || 0;
-  const parsedOnrampAmt = onrampInputMode === 'crypto' ? parsedOnrampAmtRaw * onrampNgnRate : parsedOnrampAmtRaw;
+  const parsedOnrampAmt = onrampInputMode === 'crypto' ? parsedOnrampAmtRaw * onrampNgnTokenRate : parsedOnrampAmtRaw;
   const grossOnrampCrypto = onrampInputMode === 'fiat' ? (onrampNgnRate > 0 ? parsedOnrampAmt / onrampNgnRate : 0) : parsedOnrampAmtRaw;
   
-  // Use the live PajCash quote (pajcashNetUsdc) when available — it reflects 
-  // PajCash's own processing fee.
+  // Use the live PajCash quote (pajcashNetUsdc) when available
   const estOnrampCrypto = pajcashNetUsdc !== null
     ? pajcashNetUsdc
-    : grossOnrampCrypto;
+    : (parsedOnrampAmt / (onrampNgnRate || 1500));
 
   const displayOnrampAmount = useMemo(() => {
     if (parsedOnrampAmt <= 0) return 0;
     if (liveSelectedToken.symbol === 'USDC' || liveSelectedToken.symbol === 'USDT') {
-      return estOnrampCrypto; // full quote amount — fee is on the naira side, not deducted from USDC received
+      return estOnrampCrypto;
     }
     if (jupiterQuote && jupiterQuote.outAmount) {
-      return Number(jupiterQuote.outAmount) / Math.pow(10, liveSelectedToken.decimals);
+      return Number(jupiterQuote.outAmount) / Math.pow(10, liveSelectedToken.decimals || 9);
+    }
+    // Instant live fallback calculation if Jupiter quote is loading
+    if (tokenPriceUsd > 0) {
+      return estOnrampCrypto / tokenPriceUsd;
     }
     return 0;
-  }, [parsedOnrampAmt, liveSelectedToken, estOnrampCrypto, jupiterQuote]);
+  }, [parsedOnrampAmt, liveSelectedToken, estOnrampCrypto, jupiterQuote, tokenPriceUsd]);
 
   const displayOnrampRate = useMemo(() => {
     if (liveSelectedToken.symbol === 'USDC' || liveSelectedToken.symbol === 'USDT') {
       return onrampNgnRate;
     }
-    if (displayOnrampAmount > 0) {
+    if (displayOnrampAmount > 0 && parsedOnrampAmt > 0) {
       return parsedOnrampAmt / displayOnrampAmount;
     }
-    const price = liveSelectedToken.price || 1.0;
-    return onrampNgnRate / price;
-  }, [liveSelectedToken, onrampNgnRate, displayOnrampAmount, parsedOnrampAmt]);
+    return tokenPriceUsd * onrampNgnRate;
+  }, [liveSelectedToken, onrampNgnRate, displayOnrampAmount, parsedOnrampAmt, tokenPriceUsd]);
 
   const allBankNames = useMemo(() => {
     const names = apiBanks.map(b => getBankNameString(b)).filter(Boolean);
@@ -3447,8 +3454,34 @@ export default function P2PPanel({ connected, walletTokenList }) {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '10px', marginTop: '8px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <div className="input-mode-toggle">
-                    <button type="button" className={`imt-btn ${onrampInputMode === 'fiat' ? 'active' : ''}`} onClick={() => setOnrampInputMode('fiat')}>{selectedCountry.code}</button>
-                    <button type="button" className={`imt-btn ${onrampInputMode === 'crypto' ? 'active' : ''}`} onClick={() => setOnrampInputMode('crypto')}>{liveSelectedToken.symbol}</button>
+                    <button
+                      type="button"
+                      className={`imt-btn ${onrampInputMode === 'fiat' ? 'active' : ''}`}
+                      onClick={() => {
+                        if (onrampInputMode !== 'fiat') {
+                          setOnrampInputMode('fiat');
+                          if (onrampAmount && Number(onrampAmount) > 0 && onrampNgnTokenRate > 0) {
+                            setOnrampAmount((Number(onrampAmount) * onrampNgnTokenRate).toFixed(2));
+                          }
+                        }
+                      }}
+                    >
+                      {selectedCountry.code}
+                    </button>
+                    <button
+                      type="button"
+                      className={`imt-btn ${onrampInputMode === 'crypto' ? 'active' : ''}`}
+                      onClick={() => {
+                        if (onrampInputMode !== 'crypto') {
+                          setOnrampInputMode('crypto');
+                          if (onrampAmount && Number(onrampAmount) > 0 && onrampNgnTokenRate > 0) {
+                            setOnrampAmount((Number(onrampAmount) / onrampNgnTokenRate).toFixed(4));
+                          }
+                        }
+                      }}
+                    >
+                      {liveSelectedToken.symbol}
+                    </button>
                   </div>
                 </div>
               </div>
