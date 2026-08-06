@@ -420,7 +420,6 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const [tokenSearchResults, setTokenSearchResults] = useState([]);
   const [searchingTokens, setSearchingTokens] = useState(false);
   const [jupiterQuote, setJupiterQuote] = useState(null);
-  const [quoteLoading, setQuoteLoading] = useState(false);
   const [routingState, setRoutingState] = useState('idle'); // 'routing' | 'loading_market' | 'resolved'
   const [showSuccess, setShowSuccess] = useState(false);
   const [successDetails, setSuccessDetails] = useState(null);
@@ -815,7 +814,6 @@ export default function P2PPanel({ connected, walletTokenList }) {
     const parsedOnrampAmt = onrampInputMode === 'crypto' ? parsedOnrampAmtRaw * onrampNgnTokenRate : parsedOnrampAmtRaw;
     
     if (mode === 'buy' && parsedOnrampAmt > 0 && liveSelectedToken && liveSelectedToken.symbol !== 'USDC' && liveSelectedToken.symbol !== 'USDT') {
-      setQuoteLoading(true);
       const fetchJupiterQuote = async () => {
         try {
           const grossUsdc = Math.max(0, parsedOnrampAmt / onrampNgnRate);
@@ -836,8 +834,6 @@ export default function P2PPanel({ connected, walletTokenList }) {
         } catch (e) {
           console.error("Jupiter Quote Error:", e);
           setJupiterQuote(null);
-        } finally {
-          setQuoteLoading(false);
         }
       };
       
@@ -845,7 +841,6 @@ export default function P2PPanel({ connected, walletTokenList }) {
       return () => clearTimeout(timer);
     } else {
       setJupiterQuote(null);
-      setQuoteLoading(false);
     }
   }, [mode, onrampAmount, onrampInputMode, liveSelectedToken, pajRates]);
 
@@ -3486,7 +3481,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
             )}
 
             {/* ── You will receive — token quantity preview ── */}
-            {parsedOnrampAmt > 0 && (
+            {parsedOnrampAmt > 0 && displayOnrampAmount > 0 && (
               <div style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -3509,22 +3504,12 @@ export default function P2PPanel({ connected, walletTokenList }) {
                   <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.55)' }}>You will receive</span>
                 </div>
                 <div style={{ textAlign: 'right' }}>
-                  {quoteLoading ? (
-                    <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.45)', fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <span className="p2p-mini-spinner" /> Fetching rate...
-                    </span>
-                  ) : displayOnrampAmount > 0 ? (
-                    <>
-                      <span style={{ fontSize: '16px', fontWeight: '700', color: 'var(--lime)', fontFamily: 'var(--mono)' }}>
-                        {displayOnrampAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}
-                      </span>
-                      <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.55)', marginLeft: '4px' }}>
-                        {liveSelectedToken.symbol}
-                      </span>
-                    </>
-                  ) : (
-                    <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.35)' }}>--</span>
-                  )}
+                  <span style={{ fontSize: '16px', fontWeight: '700', color: 'var(--lime)', fontFamily: 'var(--mono)' }}>
+                    {displayOnrampAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}
+                  </span>
+                  <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.55)', marginLeft: '4px' }}>
+                    {liveSelectedToken.symbol}
+                  </span>
                 </div>
               </div>
             )}
