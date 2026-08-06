@@ -22,39 +22,13 @@ import { getQuote, buildSwapTransaction } from '../services/swapService';
 import { logP2PTransaction, syncP2PTransactionStatuses, updateP2PTransactionStatus, saveSession, loadSession, deleteSession, getP2PTransactionIdsByUser, getP2PTransactionsByUser } from '../services/supabase';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { PublicKey, Transaction, TransactionInstruction, SystemProgram, VersionedTransaction } from '@solana/web3.js';
-import { getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from '@solana/spl-token';
-
-async function fetchTokenUsdPrice(mint) {
-  if (!mint) return null;
-  if (mint === 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' || mint === 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB') {
-    return 1.0;
-  }
-  try {
-    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
-    if (res.ok) {
-      const data = await res.json();
-      const priceStr = data?.pairs?.[0]?.priceUsd;
-      if (priceStr && !isNaN(parseFloat(priceStr))) {
-        const p = parseFloat(priceStr);
-        if (p > 0) return p;
-      }
-    }
-  } catch {}
-
-  try {
-    const res = await fetch(`https://api.jup.ag/price/v2?ids=${mint}`);
-    if (res.ok) {
-      const data = await res.json();
-      const priceStr = data?.data?.[mint]?.price;
-      if (priceStr && !isNaN(parseFloat(priceStr))) {
-        const p = parseFloat(priceStr);
-        if (p > 0) return p;
-      }
-    }
-  } catch {}
-
-  return null;
-}
+import {
+  getAssociatedTokenAddressSync,
+  createAssociatedTokenAccountIdempotentInstruction,
+  createTransferCheckedInstruction,
+  TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
+} from '@solana/spl-token';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -446,7 +420,6 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const [tokenSearchResults, setTokenSearchResults] = useState([]);
   const [searchingTokens, setSearchingTokens] = useState(false);
   const [jupiterQuote, setJupiterQuote] = useState(null);
-  const [liveTokenPrice, setLiveTokenPrice] = useState(null);
   const [routingState, setRoutingState] = useState('idle'); // 'routing' | 'loading_market' | 'resolved'
   const [showSuccess, setShowSuccess] = useState(false);
   const [successDetails, setSuccessDetails] = useState(null);
@@ -508,53 +481,6 @@ export default function P2PPanel({ connected, walletTokenList }) {
   // PajCash's own exchange rate returned alongside the quote — used for precise
   // fee conversion so the round-trip NGN → USDC → NGN is exact (no rounding gap).
   const [pajcashOnrampRate, setPajcashOnrampRate] = useState(null);
-
-  // ── Token Computation (MUST be defined before any useEffect/calc hooks) ──
-  const selectableTokens = (() => {
-    const baseTokens = DEFAULT_TOKENS.map(dt => {
-      const apiToken = pajTokens.find(pt => pt.mint === dt.mint || pt.symbol === dt.symbol);
-      const merged = apiToken ? { ...dt, ...apiToken } : dt;
-      const walletToken = walletTokenList?.find(w => (w.mint && w.mint === merged.mint) || w.symbol === merged.symbol);
-      return { ...merged, balance: walletToken ? walletToken.balance : 0 };
-    });
-
-    const extraApiTokens = pajTokens
-      .filter(pt => (!pt.chain || pt.chain.toUpperCase() === 'SOLANA') && !DEFAULT_TOKENS.some(dt => dt.mint === pt.mint || dt.symbol === pt.symbol))
-      .map(pt => {
-        const walletToken = walletTokenList?.find(w => (w.mint && w.mint === pt.mint) || w.symbol === pt.symbol);
-        return { ...pt, balance: walletToken ? walletToken.balance : 0 };
-      });
-
-    return [...baseTokens, ...extraApiTokens];
-  })();
-
-  const liveSelectedToken = useMemo(() => {
-    const found = selectableTokens.find(t => t.mint === selectedToken.mint || t.symbol === selectedToken.symbol);
-    return found || selectedToken;
-  }, [selectableTokens, selectedToken]);
-
-  // Fetch live USD price for selected token via DexScreener / Jupiter Price API
-  useEffect(() => {
-    if (!liveSelectedToken || !liveSelectedToken.mint) {
-      setLiveTokenPrice(null);
-      return;
-    }
-    if (liveSelectedToken.symbol === 'USDC' || liveSelectedToken.symbol === 'USDT') {
-      setLiveTokenPrice(1.0);
-      return;
-    }
-    if (typeof liveSelectedToken.price === 'number' && liveSelectedToken.price > 0) {
-      setLiveTokenPrice(liveSelectedToken.price);
-    }
-
-    let active = true;
-    fetchTokenUsdPrice(liveSelectedToken.mint).then(price => {
-      if (active && price && price > 0) {
-        setLiveTokenPrice(price);
-      }
-    });
-    return () => { active = false; };
-  }, [liveSelectedToken]);
 
   // ── QR Scanner Refs ──────────────────────────────────────────────────────
   const [scannerActive, setScannerActive] = useState(false);
@@ -857,17 +783,14 @@ export default function P2PPanel({ connected, walletTokenList }) {
   // ── Dynamic Quote for non-native tokens ──────────────────────────────────
   useEffect(() => {
     const onrampNgnRate = pajRates?.onRampRate?.rate || pajRates?.rate || 1500;
-    const tokenPriceUsd = liveTokenPrice || liveSelectedToken.price || (liveSelectedToken.symbol === 'SOL' ? 145.20 : (liveSelectedToken.symbol === 'USDC' || liveSelectedToken.symbol === 'USDT' ? 1.00 : 0));
-    const onrampNgnTokenRate = tokenPriceUsd > 0 ? tokenPriceUsd * onrampNgnRate : onrampNgnRate;
-
     const parsedOnrampAmtRaw = parseFloat(onrampAmount) || 0;
-    const parsedOnrampAmt = onrampInputMode === 'crypto' ? parsedOnrampAmtRaw * onrampNgnTokenRate : parsedOnrampAmtRaw;
+    const parsedOnrampAmt = onrampInputMode === 'crypto' ? parsedOnrampAmtRaw * onrampNgnRate : parsedOnrampAmtRaw;
     
-    if (mode === 'buy' && parsedOnrampAmt > 0 && liveSelectedToken && liveSelectedToken.symbol !== 'USDC' && liveSelectedToken.symbol !== 'USDT') {
+    if (mode === 'buy' && parsedOnrampAmt > 0 && selectedToken && selectedToken.symbol !== 'USDC' && selectedToken.symbol !== 'USDT') {
       const fetchJupiterQuote = async () => {
         try {
-          const grossUsdc = Math.max(0, parsedOnrampAmt / onrampNgnRate);
-          const amountLamports = Math.floor(grossUsdc * 1_000_000); // USDC has 6 decimals
+          const usdcAmount = onrampInputMode === 'fiat' ? Math.max(0, parsedOnrampAmt / onrampNgnRate) : parsedOnrampAmtRaw;
+          const amountLamports = Math.floor(usdcAmount * 1_000_000); // USDC has 6 decimals
           
           if (amountLamports <= 0) {
              setJupiterQuote(null);
@@ -876,7 +799,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
           const quote = await getQuote({
             inputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
-            outputMint: liveSelectedToken.mint,
+            outputMint: selectedToken.mint,
             amount: amountLamports,
             slippageBps: 100 // 1%
           });
@@ -887,12 +810,12 @@ export default function P2PPanel({ connected, walletTokenList }) {
         }
       };
       
-      const timer = setTimeout(fetchJupiterQuote, 250);
+      const timer = setTimeout(fetchJupiterQuote, 500);
       return () => clearTimeout(timer);
     } else {
       setJupiterQuote(null);
     }
-  }, [mode, onrampAmount, onrampInputMode, liveSelectedToken, liveTokenPrice, pajRates]);
+  }, [mode, onrampAmount, selectedToken, pajRates]);
 
   // ── Live PajCash Onramp Estimate (accounts for PajCash's own fees) ────────
   // getOnrampValue() returns the EXACT net USDC PajCash will deposit after their
@@ -902,12 +825,9 @@ export default function P2PPanel({ connected, walletTokenList }) {
     if (mode !== 'buy') { setPajcashNetUsdc(null); return; }
 
     const onrampNgnRate = pajRates?.onRampRate?.rate || pajRates?.rate || 1500;
-    const tokenPriceUsd = liveTokenPrice || liveSelectedToken.price || (liveSelectedToken.symbol === 'SOL' ? 145.20 : (liveSelectedToken.symbol === 'USDC' || liveSelectedToken.symbol === 'USDT' ? 1.00 : 0));
-    const onrampNgnTokenRate = tokenPriceUsd > 0 ? tokenPriceUsd * onrampNgnRate : onrampNgnRate;
-
     const parsedOnrampAmtRaw = parseFloat(onrampAmount) || 0;
     const fiatAmt = onrampInputMode === 'crypto'
-      ? parsedOnrampAmtRaw * onrampNgnTokenRate
+      ? parsedOnrampAmtRaw * onrampNgnRate
       : parsedOnrampAmtRaw;
 
     if (fiatAmt <= 0 || !sessionToken) {
@@ -921,13 +841,15 @@ export default function P2PPanel({ connected, walletTokenList }) {
     const timer = setTimeout(async () => {
       try {
         const result = await getOnrampValue({ currency: 'NGN', amount: fiatAmt }, sessionToken);
+        // PajCash returns: { value: number, rate: number } or similar shapes — handle all
         const netUsdc = result?.value ?? result?.usdcValue ?? result?.amount ?? null;
         const rate = result?.rate ?? result?.tokenRate ?? null;
         if (typeof netUsdc === 'number' && netUsdc > 0) {
           setPajcashNetUsdc(netUsdc);
         } else {
-          setPajcashNetUsdc(null);
+          setPajcashNetUsdc(null); // fallback to naive estimate
         }
+        // Store PajCash's exchange rate for precise fee USDC conversion
         if (typeof rate === 'number' && rate > 0) {
           setPajcashOnrampRate(rate);
         }
@@ -935,10 +857,10 @@ export default function P2PPanel({ connected, walletTokenList }) {
         console.warn('getOnrampValue failed, using fallback estimate:', e.message);
         setPajcashNetUsdc(null);
       }
-    }, 350);
+    }, 600);
 
     return () => clearTimeout(timer);
-  }, [mode, onrampAmount, onrampInputMode, sessionToken, pajRates, liveSelectedToken, liveTokenPrice]);
+  }, [mode, onrampAmount, onrampInputMode, sessionToken, pajRates]);
 
   // ── Load banks ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -958,9 +880,9 @@ export default function P2PPanel({ connected, walletTokenList }) {
       .finally(() => setLoadingBanks(false));
   }, [isLiveRoute, PAJCASH_API_KEY]);
 
-  // ── Load rates (Both Onramp & Offramp) ──────────────────────────────────
+  // ── Load rates ────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!LIVE_CURRENCIES.has(selectedCountry.currency)) return;
+    if (!isLiveRoute) return;
     let cancelled = false;
 
     const fetchRates = () => {
@@ -972,9 +894,9 @@ export default function P2PPanel({ connected, walletTokenList }) {
     };
 
     fetchRates();
-    const interval = setInterval(fetchRates, 15_000);
+    const interval = setInterval(fetchRates, 30_000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [selectedCountry.currency]);
+  }, [isLiveRoute]);
 
   // ── Load payout history (Permanent Supabase History + PajCash Live Sync) ──
   const loadPayoutLogs = async () => {
@@ -1291,6 +1213,46 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
   // ── Selectable token list ─────────────────────────────────────────────────
   // Always show all DEFAULT_TOKENS (USDC, USDT, SOL). Merge with pajTokens
+  // from the API so API metadata takes priority, but defaults are never dropped.
+  const selectableTokens = (() => {
+    // Start with DEFAULT_TOKENS as the baseline
+    const baseTokens = DEFAULT_TOKENS.map(dt => {
+      // If the API returned a matching token, prefer its metadata
+      const apiToken = pajTokens.find(pt =>
+        pt.mint === dt.mint || pt.symbol === dt.symbol
+      );
+      const merged = apiToken ? { ...dt, ...apiToken } : dt;
+      // Attach live wallet balance
+      const walletToken = walletTokenList?.find(w =>
+        (w.mint && w.mint === merged.mint) || w.symbol === merged.symbol
+      );
+      return {
+        ...merged,
+        balance: walletToken ? walletToken.balance : 0,
+      };
+    });
+
+    // Add any extra API tokens that aren't already in DEFAULT_TOKENS
+    const extraApiTokens = pajTokens
+      .filter(pt =>
+        (!pt.chain || pt.chain.toUpperCase() === 'SOLANA') &&
+        !DEFAULT_TOKENS.some(dt => dt.mint === pt.mint || dt.symbol === pt.symbol)
+      )
+      .map(pt => {
+        const walletToken = walletTokenList?.find(w =>
+          (w.mint && w.mint === pt.mint) || w.symbol === pt.symbol
+        );
+        return { ...pt, balance: walletToken ? walletToken.balance : 0 };
+      });
+
+    return [...baseTokens, ...extraApiTokens];
+  })();
+
+  const liveSelectedToken = useMemo(() => {
+    const found = selectableTokens.find(t => t.mint === selectedToken.mint || t.symbol === selectedToken.symbol);
+    return found || selectedToken;
+  }, [selectableTokens, selectedToken]);
+
   useEffect(() => {
     if (mode === 'sell') {
       const available = selectableTokens.some(t => t.symbol === selectedToken.symbol || t.mint === selectedToken.mint);
@@ -1465,7 +1427,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
   };
 
   // ── Derived values ────────────────────────────────────────────────────────
-  const tokenPriceUsd = liveTokenPrice || liveSelectedToken.price || (liveSelectedToken.symbol === 'SOL' ? 145.20 : (liveSelectedToken.symbol === 'USDC' || liveSelectedToken.symbol === 'USDT' ? 1.00 : 0));
+  const tokenPriceUsd = liveSelectedToken.price || (liveSelectedToken.symbol === 'SOL' ? 145.20 : 1.00);
   const activeNgnRate = pajRates?.offRampRate?.rate || pajRates?.rate || 1550;
   const onrampNgnRate = pajRates?.onRampRate?.rate || pajRates?.rate || 1500;
   const ngnRate = tokenPriceUsd * activeNgnRate;
@@ -1483,45 +1445,43 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
   // ── Validation: Onramp minimum $1.00 USD worth of crypto ───────────────────
   const ONRAMP_MIN_USD = 1.00;
+  // estOnrampCrypto is defined later; we use grossOnrampCrypto here for early check
   const onrampGrossValueUsd = (onrampInputMode === 'fiat'
     ? (onrampNgnRate > 0 ? (parseFloat(onrampAmount) || 0) / onrampNgnRate : 0)
     : (parseFloat(onrampAmount) || 0)) * tokenPriceUsd;
   const onrampBelowMinimum = (parseFloat(onrampAmount) || 0) > 0 && onrampGrossValueUsd < ONRAMP_MIN_USD;
 
-  const onrampNgnTokenRate = tokenPriceUsd * onrampNgnRate;
   const parsedOnrampAmtRaw = parseFloat(onrampAmount) || 0;
-  const parsedOnrampAmt = onrampInputMode === 'crypto' ? parsedOnrampAmtRaw * onrampNgnTokenRate : parsedOnrampAmtRaw;
+  const parsedOnrampAmt = onrampInputMode === 'crypto' ? parsedOnrampAmtRaw * onrampNgnRate : parsedOnrampAmtRaw;
   const grossOnrampCrypto = onrampInputMode === 'fiat' ? (onrampNgnRate > 0 ? parsedOnrampAmt / onrampNgnRate : 0) : parsedOnrampAmtRaw;
   
-  // Use the live PajCash quote (pajcashNetUsdc) when available
+  // Use the live PajCash quote (pajcashNetUsdc) when available — it reflects 
+  // PajCash's own processing fee.
   const estOnrampCrypto = pajcashNetUsdc !== null
     ? pajcashNetUsdc
-    : (parsedOnrampAmt / (onrampNgnRate || 1500));
+    : grossOnrampCrypto;
 
   const displayOnrampAmount = useMemo(() => {
     if (parsedOnrampAmt <= 0) return 0;
     if (liveSelectedToken.symbol === 'USDC' || liveSelectedToken.symbol === 'USDT') {
-      return estOnrampCrypto;
+      return estOnrampCrypto; // full quote amount — fee is on the naira side, not deducted from USDC received
     }
     if (jupiterQuote && jupiterQuote.outAmount) {
-      return Number(jupiterQuote.outAmount) / Math.pow(10, liveSelectedToken.decimals || 9);
-    }
-    // Instant live fallback calculation if Jupiter quote is loading
-    if (tokenPriceUsd > 0) {
-      return estOnrampCrypto / tokenPriceUsd;
+      return Number(jupiterQuote.outAmount) / Math.pow(10, liveSelectedToken.decimals);
     }
     return 0;
-  }, [parsedOnrampAmt, liveSelectedToken, estOnrampCrypto, jupiterQuote, tokenPriceUsd]);
+  }, [parsedOnrampAmt, liveSelectedToken, estOnrampCrypto, jupiterQuote]);
 
   const displayOnrampRate = useMemo(() => {
     if (liveSelectedToken.symbol === 'USDC' || liveSelectedToken.symbol === 'USDT') {
       return onrampNgnRate;
     }
-    if (displayOnrampAmount > 0 && parsedOnrampAmt > 0) {
+    if (displayOnrampAmount > 0) {
       return parsedOnrampAmt / displayOnrampAmount;
     }
-    return tokenPriceUsd * onrampNgnRate;
-  }, [liveSelectedToken, onrampNgnRate, displayOnrampAmount, parsedOnrampAmt, tokenPriceUsd]);
+    const price = liveSelectedToken.price || 1.0;
+    return onrampNgnRate / price;
+  }, [liveSelectedToken, onrampNgnRate, displayOnrampAmount, parsedOnrampAmt]);
 
   const allBankNames = useMemo(() => {
     const names = apiBanks.map(b => getBankNameString(b)).filter(Boolean);
@@ -3487,50 +3447,21 @@ export default function P2PPanel({ connected, walletTokenList }) {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '10px', marginTop: '8px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <div className="input-mode-toggle">
-                    <button
-                      type="button"
-                      className={`imt-btn ${onrampInputMode === 'fiat' ? 'active' : ''}`}
-                      onClick={() => {
-                        if (onrampInputMode !== 'fiat') {
-                          setOnrampInputMode('fiat');
-                          if (onrampAmount && Number(onrampAmount) > 0 && onrampNgnTokenRate > 0) {
-                            setOnrampAmount((Number(onrampAmount) * onrampNgnTokenRate).toFixed(2));
-                          }
-                        }
-                      }}
-                    >
-                      {selectedCountry.code}
-                    </button>
-                    <button
-                      type="button"
-                      className={`imt-btn ${onrampInputMode === 'crypto' ? 'active' : ''}`}
-                      onClick={() => {
-                        if (onrampInputMode !== 'crypto') {
-                          setOnrampInputMode('crypto');
-                          if (onrampAmount && Number(onrampAmount) > 0 && onrampNgnTokenRate > 0) {
-                            setOnrampAmount((Number(onrampAmount) / onrampNgnTokenRate).toFixed(4));
-                          }
-                        }
-                      }}
-                    >
-                      {liveSelectedToken.symbol}
-                    </button>
+                    <button type="button" className={`imt-btn ${onrampInputMode === 'fiat' ? 'active' : ''}`} onClick={() => setOnrampInputMode('fiat')}>{selectedCountry.code}</button>
+                    <button type="button" className={`imt-btn ${onrampInputMode === 'crypto' ? 'active' : ''}`} onClick={() => setOnrampInputMode('crypto')}>{liveSelectedToken.symbol}</button>
                   </div>
                 </div>
               </div>
             </div>
 
             {/* Exchange rate + service fee — shown below Amount input block */}
-            <div style={{ marginTop: '6px', fontSize: '11px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span style={{ color: 'rgba(255,255,255,0.6)', fontWeight: '500' }}>
-                1 {liveSelectedToken.symbol} ≈ {selectedCountry.symbol}{displayOnrampRate.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </span>
-              {pajRates?.onRampRate?.rate && liveSelectedToken.symbol !== 'USDC' && liveSelectedToken.symbol !== 'USDT' && (
-                <span style={{ color: 'rgba(255,255,255,0.38)', fontSize: '10px' }}>
-                  (PajCash rate: {selectedCountry.symbol}{pajRates.onRampRate.rate.toLocaleString(undefined, { minimumFractionDigits: 2 })}/USD)
+            {pajRates?.onRampRate?.rate && (
+              <div style={{ marginTop: '6px', fontSize: '11px' }}>
+                <span style={{ color: 'rgba(255,255,255,0.38)' }}>
+                  1 {liveSelectedToken.symbol} ≈ {selectedCountry.symbol}{displayOnrampRate.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
-              )}
-            </div>
+              </div>
+            )}
 
             {/* ── You will receive — token quantity preview ── */}
             {parsedOnrampAmt > 0 && displayOnrampAmount > 0 && (
