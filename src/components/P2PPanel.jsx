@@ -463,7 +463,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
   // ── Onramp (Buy) State ───────────────────────────────────────────────────
   const [onrampAmount, setOnrampAmount] = useState(''); // amount user wants to send
   const [offrampInputMode, setOfframpInputMode] = useState('fiat'); // 'fiat' | 'crypto'
-  const [onrampInputMode, setOnrampInputMode] = useState('fiat'); // 'fiat' | 'crypto'
+  const [onrampInputMode] = useState('fiat'); // locked to fiat — token mode disabled
   const [onrampOrder, setOnrampOrder] = useState(null); // PajCash order response with bank details
   const [onrampLoading, setOnrampLoading] = useState(false);
   const [onrampError, setOnrampError] = useState(null);
@@ -3443,12 +3443,11 @@ export default function P2PPanel({ connected, walletTokenList }) {
                 </div>
               </div>
 
-              {/* Bottom Row of block: Mode toggle */}
+              {/* Bottom Row of block: Fiat mode label (token mode disabled) */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '10px', marginTop: '8px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <div className="input-mode-toggle">
-                    <button type="button" className={`imt-btn ${onrampInputMode === 'fiat' ? 'active' : ''}`} onClick={() => setOnrampInputMode('fiat')}>{selectedCountry.code}</button>
-                    <button type="button" className={`imt-btn ${onrampInputMode === 'crypto' ? 'active' : ''}`} onClick={() => setOnrampInputMode('crypto')}>{liveSelectedToken.symbol}</button>
+                    <button type="button" className="imt-btn active">{selectedCountry.code}</button>
                   </div>
                 </div>
               </div>
