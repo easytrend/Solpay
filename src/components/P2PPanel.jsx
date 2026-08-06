@@ -22,13 +22,39 @@ import { getQuote, buildSwapTransaction } from '../services/swapService';
 import { logP2PTransaction, syncP2PTransactionStatuses, updateP2PTransactionStatus, saveSession, loadSession, deleteSession, getP2PTransactionIdsByUser, getP2PTransactionsByUser } from '../services/supabase';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { PublicKey, Transaction, TransactionInstruction, SystemProgram, VersionedTransaction } from '@solana/web3.js';
-import {
-  getAssociatedTokenAddressSync,
-  createAssociatedTokenAccountIdempotentInstruction,
-  createTransferCheckedInstruction,
-  TOKEN_PROGRAM_ID,
-  TOKEN_2022_PROGRAM_ID,
-} from '@solana/spl-token';
+import { getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from '@solana/spl-token';
+
+async function fetchTokenUsdPrice(mint) {
+  if (!mint) return null;
+  if (mint === 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' || mint === 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB') {
+    return 1.0;
+  }
+  try {
+    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
+    if (res.ok) {
+      const data = await res.json();
+      const priceStr = data?.pairs?.[0]?.priceUsd;
+      if (priceStr && !isNaN(parseFloat(priceStr))) {
+        const p = parseFloat(priceStr);
+        if (p > 0) return p;
+      }
+    }
+  } catch {}
+
+  try {
+    const res = await fetch(`https://api.jup.ag/price/v2?ids=${mint}`);
+    if (res.ok) {
+      const data = await res.json();
+      const priceStr = data?.data?.[mint]?.price;
+      if (priceStr && !isNaN(parseFloat(priceStr))) {
+        const p = parseFloat(priceStr);
+        if (p > 0) return p;
+      }
+    }
+  } catch {}
+
+  return null;
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -420,6 +446,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const [tokenSearchResults, setTokenSearchResults] = useState([]);
   const [searchingTokens, setSearchingTokens] = useState(false);
   const [jupiterQuote, setJupiterQuote] = useState(null);
+  const [liveTokenPrice, setLiveTokenPrice] = useState(null);
   const [routingState, setRoutingState] = useState('idle'); // 'routing' | 'loading_market' | 'resolved'
   const [showSuccess, setShowSuccess] = useState(false);
   const [successDetails, setSuccessDetails] = useState(null);
@@ -505,6 +532,29 @@ export default function P2PPanel({ connected, walletTokenList }) {
     const found = selectableTokens.find(t => t.mint === selectedToken.mint || t.symbol === selectedToken.symbol);
     return found || selectedToken;
   }, [selectableTokens, selectedToken]);
+
+  // Fetch live USD price for selected token via DexScreener / Jupiter Price API
+  useEffect(() => {
+    if (!liveSelectedToken || !liveSelectedToken.mint) {
+      setLiveTokenPrice(null);
+      return;
+    }
+    if (liveSelectedToken.symbol === 'USDC' || liveSelectedToken.symbol === 'USDT') {
+      setLiveTokenPrice(1.0);
+      return;
+    }
+    if (typeof liveSelectedToken.price === 'number' && liveSelectedToken.price > 0) {
+      setLiveTokenPrice(liveSelectedToken.price);
+    }
+
+    let active = true;
+    fetchTokenUsdPrice(liveSelectedToken.mint).then(price => {
+      if (active && price && price > 0) {
+        setLiveTokenPrice(price);
+      }
+    });
+    return () => { active = false; };
+  }, [liveSelectedToken]);
 
   // ── QR Scanner Refs ──────────────────────────────────────────────────────
   const [scannerActive, setScannerActive] = useState(false);
@@ -807,8 +857,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
   // ── Dynamic Quote for non-native tokens ──────────────────────────────────
   useEffect(() => {
     const onrampNgnRate = pajRates?.onRampRate?.rate || pajRates?.rate || 1500;
-    const tokenPriceUsd = liveSelectedToken.price || (liveSelectedToken.symbol === 'SOL' ? 145.20 : 1.00);
-    const onrampNgnTokenRate = tokenPriceUsd * onrampNgnRate;
+    const tokenPriceUsd = liveTokenPrice || liveSelectedToken.price || (liveSelectedToken.symbol === 'SOL' ? 145.20 : (liveSelectedToken.symbol === 'USDC' || liveSelectedToken.symbol === 'USDT' ? 1.00 : 0));
+    const onrampNgnTokenRate = tokenPriceUsd > 0 ? tokenPriceUsd * onrampNgnRate : onrampNgnRate;
 
     const parsedOnrampAmtRaw = parseFloat(onrampAmount) || 0;
     const parsedOnrampAmt = onrampInputMode === 'crypto' ? parsedOnrampAmtRaw * onrampNgnTokenRate : parsedOnrampAmtRaw;
@@ -842,7 +892,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
     } else {
       setJupiterQuote(null);
     }
-  }, [mode, onrampAmount, onrampInputMode, liveSelectedToken, pajRates]);
+  }, [mode, onrampAmount, onrampInputMode, liveSelectedToken, liveTokenPrice, pajRates]);
 
   // ── Live PajCash Onramp Estimate (accounts for PajCash's own fees) ────────
   // getOnrampValue() returns the EXACT net USDC PajCash will deposit after their
@@ -852,8 +902,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
     if (mode !== 'buy') { setPajcashNetUsdc(null); return; }
 
     const onrampNgnRate = pajRates?.onRampRate?.rate || pajRates?.rate || 1500;
-    const tokenPriceUsd = liveSelectedToken.price || (liveSelectedToken.symbol === 'SOL' ? 145.20 : 1.00);
-    const onrampNgnTokenRate = tokenPriceUsd * onrampNgnRate;
+    const tokenPriceUsd = liveTokenPrice || liveSelectedToken.price || (liveSelectedToken.symbol === 'SOL' ? 145.20 : (liveSelectedToken.symbol === 'USDC' || liveSelectedToken.symbol === 'USDT' ? 1.00 : 0));
+    const onrampNgnTokenRate = tokenPriceUsd > 0 ? tokenPriceUsd * onrampNgnRate : onrampNgnRate;
 
     const parsedOnrampAmtRaw = parseFloat(onrampAmount) || 0;
     const fiatAmt = onrampInputMode === 'crypto'
@@ -888,7 +938,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
     }, 350);
 
     return () => clearTimeout(timer);
-  }, [mode, onrampAmount, onrampInputMode, sessionToken, pajRates, liveSelectedToken]);
+  }, [mode, onrampAmount, onrampInputMode, sessionToken, pajRates, liveSelectedToken, liveTokenPrice]);
 
   // ── Load banks ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1415,7 +1465,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
   };
 
   // ── Derived values ────────────────────────────────────────────────────────
-  const tokenPriceUsd = liveSelectedToken.price || (liveSelectedToken.symbol === 'SOL' ? 145.20 : 1.00);
+  const tokenPriceUsd = liveTokenPrice || liveSelectedToken.price || (liveSelectedToken.symbol === 'SOL' ? 145.20 : (liveSelectedToken.symbol === 'USDC' || liveSelectedToken.symbol === 'USDT' ? 1.00 : 0));
   const activeNgnRate = pajRates?.offRampRate?.rate || pajRates?.rate || 1550;
   const onrampNgnRate = pajRates?.onRampRate?.rate || pajRates?.rate || 1500;
   const ngnRate = tokenPriceUsd * activeNgnRate;
@@ -1433,7 +1483,6 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
   // ── Validation: Onramp minimum $1.00 USD worth of crypto ───────────────────
   const ONRAMP_MIN_USD = 1.00;
-  // estOnrampCrypto is defined later; we use grossOnrampCrypto here for early check
   const onrampGrossValueUsd = (onrampInputMode === 'fiat'
     ? (onrampNgnRate > 0 ? (parseFloat(onrampAmount) || 0) / onrampNgnRate : 0)
     : (parseFloat(onrampAmount) || 0)) * tokenPriceUsd;
