@@ -2975,7 +2975,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
                     }}
                   >
                     <div style={{ padding: '4px 8px 6px 8px', fontSize: '10px', fontWeight: '700', color: 'var(--lime)', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span>⚡ Select Saved Account ({matchingPastAccounts.length})</span>
+                      <span>Previous Accounts ({matchingPastAccounts.length})</span>
                       <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)', textTransform: 'none' }}>Tap to choose</span>
                     </div>
                     {matchingPastAccounts.map((acc, idx) => (
