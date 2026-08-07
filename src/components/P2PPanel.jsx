@@ -2930,7 +2930,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
         ) : (
           <>
             {/* Account Number — shown first */}
-            <div className="field" style={{ position: 'relative', zIndex: (isAcctInputFocused && cleanAcctInput.length >= 3 && matchingPastAccounts.length > 0) ? 1200 : 2 }}>
+            <div className="field" style={{ position: 'relative', zIndex: (isAcctInputFocused && acctQueryText.length >= 3 && matchingPastAccounts.length > 0) ? 1200 : 2 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                 <div className="field-label" style={{ marginBottom: 0 }}>Account Number</div>
                 <div style={{ display: 'flex', gap: '8px' }}>
