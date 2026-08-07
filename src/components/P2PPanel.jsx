@@ -428,6 +428,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const [selectedLog, setSelectedLog] = useState(null); // log detail pop-up
   const [copiedAccount, setCopiedAccount] = useState(false);
   const [showAmountTooltip, setShowAmountTooltip] = useState(false);
+  const [isAcctInputFocused, setIsAcctInputFocused] = useState(false);
   const [relayerActive, setRelayerActive] = useState(false);
 
   // ── Manual Release State for History Pop-up ──────────────────────────────
@@ -1092,27 +1093,85 @@ export default function P2PPanel({ connected, walletTokenList }) {
   // NOTE: Success card is intentionally NOT auto-closed.
   // It stays visible until the user clicks "Done".
 
-  // ── Autofill from previous details ──────────────────────────────────────
-  // When user types first 4+ digits of account number, check if it matches
-  // a previously saved account number prefix and auto-fill bank selection.
-  useEffect(() => {
-    if (!publicKey || accountNumber.length < 4) return;
-    const key = publicKey.toBase58();
-    const savedAcc = localStorage.getItem(`paj_account_number_${key}`);
-    const savedBank = localStorage.getItem(`paj_bank_name_${key}`);
-    if (
-      savedAcc &&
-      savedBank &&
-      savedAcc.startsWith(accountNumber) &&
-      accountNumber.length >= 4 &&
-      accountNumber.length < savedAcc.length &&
-      selectedBank === 'Choose Bank'
-    ) {
-      // Auto-fill the full account number and bank
-      setAccountNumber(savedAcc);
-      setSelectedBank(savedBank);
+  // ── Gather all unique past accounts from Supabase history & localStorage ──
+  const pastAccounts = useMemo(() => {
+    const list = [];
+    const seen = new Set();
+
+    const addAccount = (acct, bank, name) => {
+      if (!acct || typeof acct !== 'string') return;
+      const cleanAcct = acct.replace(/\D/g, '').trim();
+      if (cleanAcct.length < 8) return;
+      const bankStr = (bank && typeof bank === 'string' && bank !== 'Choose Bank') ? bank : '';
+      const key = `${cleanAcct}_${bankStr}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      list.push({
+        accountNumber: cleanAcct,
+        bankName: bankStr || 'Saved Account',
+        accountName: (name && typeof name === 'string' && name !== 'Account Holder' && name !== 'No Bank Match') ? name : '',
+      });
+    };
+
+    // 1. From payoutLogs (loaded from Supabase & live sync)
+    if (Array.isArray(payoutLogs)) {
+      payoutLogs.forEach(log => {
+        addAccount(
+          log.accountNumber || log.account_number || log.account,
+          log.bankName || log.bank_name || log.bank,
+          log.accountName || log.account_name || log.name
+        );
+      });
     }
-  }, [accountNumber, publicKey]);
+
+    // 2. From localStorage
+    if (publicKey) {
+      try {
+        const walletKey = publicKey.toBase58();
+        const localOrders = JSON.parse(localStorage.getItem(`paj_user_orders_${walletKey}`) || '[]');
+        if (Array.isArray(localOrders)) {
+          localOrders.forEach(o => {
+            addAccount(o.account || o.accountNumber, o.bank || o.bankName, o.name || o.accountName);
+          });
+        }
+        const singleAcc = localStorage.getItem(`paj_account_number_${walletKey}`);
+        const singleBank = localStorage.getItem(`paj_bank_name_${walletKey}`);
+        const singleName = localStorage.getItem(`paj_account_name_${walletKey}`);
+        if (singleAcc) addAccount(singleAcc, singleBank, singleName);
+      } catch {}
+    }
+
+    return list;
+  }, [payoutLogs, publicKey]);
+
+  // ── Matching accounts based on first 3+ digits typed ──
+  const cleanAcctInput = accountNumber.replace(/\D/g, '').trim();
+  const matchingPastAccounts = useMemo(() => {
+    if (cleanAcctInput.length < 3) return [];
+    return pastAccounts.filter(acc =>
+      acc.accountNumber.startsWith(cleanAcctInput) || acc.accountNumber.includes(cleanAcctInput)
+    );
+  }, [pastAccounts, cleanAcctInput]);
+
+  const handleSelectPastAccount = useCallback((acc) => {
+    setAccountNumber(acc.accountNumber);
+    if (acc.bankName && acc.bankName !== 'Choose Bank' && acc.bankName !== 'Saved Account') {
+      const match = apiBanks.find(b => {
+        const bName = typeof b === 'string' ? b : (b.name || b.bank_name || b.code || '');
+        return bName.toLowerCase().includes(acc.bankName.toLowerCase()) || acc.bankName.toLowerCase().includes(bName.toLowerCase());
+      });
+      if (match) {
+        const matchedName = typeof match === 'string' ? match : (match.name || match.bank_name);
+        setSelectedBank(matchedName);
+      } else {
+        setSelectedBank(acc.bankName);
+      }
+    }
+    if (acc.accountName) {
+      setAccountName(acc.accountName);
+    }
+    setIsAcctInputFocused(false);
+  }, [apiBanks]);
 
   // ── Routing animation ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -2836,11 +2895,80 @@ export default function P2PPanel({ connected, walletTokenList }) {
                 <input
                   type="text"
                   value={accountNumber}
-                  onChange={e => setAccountNumber(e.target.value.replace(/\D/g, ''))}
+                  onChange={e => {
+                    setAccountNumber(e.target.value.replace(/\D/g, ''));
+                    setIsAcctInputFocused(true);
+                  }}
+                  onFocus={() => setIsAcctInputFocused(true)}
+                  onBlur={() => setTimeout(() => setIsAcctInputFocused(false), 200)}
                   placeholder="0000000000"
                   disabled={!canTransact}
                 />
               </div>
+
+              {/* ── Auto-pop matching previous accounts card (>= 3 digits) ── */}
+              {isAcctInputFocused && cleanAcctInput.length >= 3 && matchingPastAccounts.length > 0 && (
+                <div
+                  className="p2p-account-suggestions"
+                  style={{
+                    position: 'absolute',
+                    top: 'calc(100% - 14px)',
+                    left: 0,
+                    right: 0,
+                    background: 'rgba(18, 22, 31, 0.98)',
+                    border: '1px solid rgba(163, 230, 53, 0.35)',
+                    borderRadius: '14px',
+                    padding: '8px',
+                    zIndex: 500,
+                    boxShadow: '0 12px 36px rgba(0,0,0,0.85), 0 0 20px rgba(163, 230, 53, 0.15)',
+                    maxHeight: '220px',
+                    overflowY: 'auto',
+                    backdropFilter: 'blur(16px)',
+                  }}
+                >
+                  <div style={{ padding: '4px 8px 6px 8px', fontSize: '10px', fontWeight: '700', color: 'var(--lime)', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>⚡ Previous Accounts</span>
+                    <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)', textTransform: 'none' }}>Tap to auto-fill</span>
+                  </div>
+                  {matchingPastAccounts.map((acc, idx) => (
+                    <div
+                      key={`${acc.accountNumber}_${idx}`}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        handleSelectPastAccount(acc);
+                      }}
+                      style={{
+                        padding: '10px 12px',
+                        borderRadius: '10px',
+                        background: 'rgba(255,255,255,0.03)',
+                        marginBottom: idx < matchingPastAccounts.length - 1 ? '4px' : 0,
+                        cursor: 'pointer',
+                        border: '1px solid rgba(255,255,255,0.06)',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontSize: '13px', fontWeight: '700', color: '#ffffff', letterSpacing: '0.04em', fontFamily: 'var(--mono)' }}>
+                          {acc.accountNumber}
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.55)', marginTop: '2px' }}>
+                          {acc.bankName}
+                        </div>
+                      </div>
+                      {acc.accountName && (
+                        <div style={{ textAlign: 'right', maxWidth: '140px' }}>
+                          <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--lime)', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {acc.accountName}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div style={{ marginTop: '6px', minHeight: '16px', fontSize: '12px', color: 'var(--lime)', fontWeight: 'bold' }}>
                 {accountNumber && selectedBank !== 'Choose Bank' && (
                   resolvingName
