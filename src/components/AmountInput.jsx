@@ -57,6 +57,7 @@ export default function AmountInput({ amount, setAmount, inputMode, setInputMode
         </div>
         <div className="amount-divider" />
         <div className="amount-bottom">
+          <span className="amount-converted">{convertedLabel}</span>
           <div className="input-mode-toggle">
             <button className={`imt-btn ${inputMode === 'fiat' ? 'active' : ''}`} onClick={() => setInputMode('fiat')}>{currency}</button>
             <button className={`imt-btn ${inputMode === 'crypto' ? 'active' : ''}`} disabled={!tok} onClick={() => setInputMode('crypto')}>{tokSymbol}</button>
