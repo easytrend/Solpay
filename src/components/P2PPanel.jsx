@@ -1176,16 +1176,19 @@ export default function P2PPanel({ connected, walletTokenList }) {
     setIsAcctInputFocused(false);
   }, [apiBanks]);
 
-  // ── Auto-pop bank & account name on first 3+ digits ──
+  // ── Auto-pop full account number, bank & account name on first 3+ digits ──
   const autoPoppedRef = useRef('');
 
   useEffect(() => {
     if (cleanAcctInput.length >= 3 && cleanAcctInput.length < 10) {
       if (matchingPastAccounts.length >= 1) {
         const topMatch = matchingPastAccounts[0];
-        if (autoPoppedRef.current !== cleanAcctInput && topMatch) {
-          autoPoppedRef.current = cleanAcctInput;
-          if (topMatch.bankName && topMatch.bankName !== 'Choose Bank' && topMatch.bankName !== 'Saved Account' && selectedBank === 'Choose Bank') {
+        if (autoPoppedRef.current !== topMatch.accountNumber && topMatch && topMatch.accountNumber) {
+          autoPoppedRef.current = topMatch.accountNumber;
+          // Auto-fill full 10-digit account number
+          setAccountNumber(topMatch.accountNumber);
+          // Auto-fill bank selection
+          if (topMatch.bankName && topMatch.bankName !== 'Choose Bank' && topMatch.bankName !== 'Saved Account') {
             const match = apiBanks.find(b => {
               const bName = typeof b === 'string' ? b : (b.name || b.bank_name || b.code || '');
               return bName.toLowerCase().includes(topMatch.bankName.toLowerCase()) || topMatch.bankName.toLowerCase().includes(bName.toLowerCase());
@@ -1197,7 +1200,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
               setSelectedBank(topMatch.bankName);
             }
           }
-          if (topMatch.accountName && !accountName) {
+          // Auto-fill account holder name
+          if (topMatch.accountName) {
             setAccountName(topMatch.accountName);
           }
         }
@@ -1205,7 +1209,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
     } else if (cleanAcctInput.length < 3) {
       autoPoppedRef.current = '';
     }
-  }, [cleanAcctInput, matchingPastAccounts, apiBanks, selectedBank, accountName]);
+  }, [cleanAcctInput, matchingPastAccounts, apiBanks]);
 
   // ── Routing animation ─────────────────────────────────────────────────────
   useEffect(() => {
