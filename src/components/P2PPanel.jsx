@@ -3138,10 +3138,10 @@ export default function P2PPanel({ connected, walletTokenList }) {
                     <div
                       onClick={e => { e.stopPropagation(); setShowAmountTooltip(false); }}
                       style={{
-                        position: 'absolute', bottom: '22px', left: '50%', transform: 'translateX(-50%)',
+                        position: 'absolute', bottom: '24px', left: '-6px',
                         background: 'rgba(20,20,30,0.97)', border: '1px solid rgba(163,230,53,0.3)',
                         borderRadius: '12px', padding: '12px 24px 10px 14px', fontSize: '11px', color: 'rgba(255,255,255,0.9)',
-                        width: '240px', lineHeight: '1.6', zIndex: 300, cursor: 'pointer',
+                        width: '230px', maxWidth: 'calc(100vw - 60px)', lineHeight: '1.6', zIndex: 300, cursor: 'pointer',
                         boxShadow: '0 8px 28px rgba(0,0,0,0.7)', textAlign: 'center',
                       }}
                     >
@@ -3156,7 +3156,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
                       >
                         ✕
                       </button>
-                      💚 fiatwallet takes a <strong style={{ color: 'var(--lime)' }}>0.5% protocol fee</strong> to serve you better.
+                      fiatwallet takes a <strong style={{ color: 'var(--lime)' }}>0.5% protocol fee</strong> to serve you better.
                     </div>
                   )}
                 </div>
@@ -3447,11 +3447,14 @@ export default function P2PPanel({ connected, walletTokenList }) {
                 Amount
               </div>
               {/* Clickable tooltip */}
-              <div style={{ position: 'relative', display: 'inline-flex' }}>
+              <div
+                style={{ position: 'relative', display: 'inline-flex', cursor: 'pointer' }}
+                onClick={() => setShowOnrampTooltip(v => !v)}
+              >
                 <svg
-                  width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                   strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-                  style={{ color: 'rgba(255,255,255,0.15)', cursor: 'default' }}
+                  style={{ color: 'var(--lime)', filter: 'drop-shadow(0 0 4px rgba(163,230,53,0.5))' }}
                 >
                   <circle cx="12" cy="12" r="10" />
                   <line x1="12" y1="16" x2="12" y2="12" />
@@ -3461,10 +3464,10 @@ export default function P2PPanel({ connected, walletTokenList }) {
                   <div
                     onClick={e => { e.stopPropagation(); setShowOnrampTooltip(false); }}
                     style={{
-                      position: 'absolute', bottom: '22px', left: '50%', transform: 'translateX(-50%)',
+                      position: 'absolute', bottom: '24px', left: '-6px',
                       background: 'rgba(20,20,30,0.97)', border: '1px solid rgba(163,230,53,0.3)',
                       borderRadius: '12px', padding: '12px 24px 10px 14px', fontSize: '11px', color: 'rgba(255,255,255,0.9)',
-                      width: '240px', lineHeight: '1.6', zIndex: 300, cursor: 'pointer',
+                      width: '230px', maxWidth: 'calc(100vw - 60px)', lineHeight: '1.6', zIndex: 300, cursor: 'pointer',
                       boxShadow: '0 8px 28px rgba(0,0,0,0.7)', textAlign: 'center',
                     }}
                   >
@@ -3479,7 +3482,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
                     >
                       ✕
                     </button>
-                    💚 fiatwallet takes a <strong style={{ color: 'var(--lime)' }}>0.5% protocol fee</strong> to serve you better.
+                    fiatwallet takes a <strong style={{ color: 'var(--lime)' }}>0.5% protocol fee</strong> to serve you better.
                   </div>
                 )}
               </div>
