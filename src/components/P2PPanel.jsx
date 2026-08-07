@@ -2101,11 +2101,11 @@ export default function P2PPanel({ connected, walletTokenList }) {
       const bankId = bankObj ? (bankObj.id || bankObj.code || bankObj.name) : selectedBank;
 
       // 1. Create paj_ramp off-ramp order.
-      // NOTE: We do NOT pass `fee`/businessUSDCFee here — PajCash deducts it
-      // from the recipient's fiat payout which is wrong. Instead we collect the
-      // 0.5% platform fee by transferring baseCryptoAmount (net + 0.5%) on-chain.
-      // PajCash receives the full fiat amount to the recipient and the extra
-      // 0.5% crypto is our platform revenue.
+      // We pass `fee: platformFee` (businessUSDCFee) so PajCash knows to cover
+      // their processing cost from the EXTRA crypto we send on-chain (baseCryptoAmount
+      // = net + 0.5%). Without this, PajCash deducts their processing fee (~0.5%)
+      // from the recipient's fiat payout instead. With it, recipient gets the full
+      // fiatAmount and the 0.5% fee is taken from the extra crypto on-chain.
       const order = await createOfframpOrder(
         {
           bank: bankId,
@@ -2114,6 +2114,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
           fiatAmount: parsedAmt,
           mint: liveSelectedToken.mint,
           chain: 'SOLANA',
+          fee: platformFee,
           webhookURL: import.meta.env.VITE_PAJCASH_WEBHOOK_URL || undefined,
         },
         sessionToken
