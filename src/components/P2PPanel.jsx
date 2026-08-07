@@ -3446,6 +3446,16 @@ export default function P2PPanel({ connected, walletTokenList }) {
               <div className="field-label" style={{ marginBottom: 0, textTransform: 'none', fontSize: '13px', fontWeight: '500', color: 'rgba(255,255,255,0.6)', letterSpacing: 'normal' }}>
                 Amount
               </div>
+              {/* Unclickable info icon */}
+              <svg
+                width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                style={{ color: 'rgba(255,255,255,0.2)', cursor: 'default' }}
+              >
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="16" x2="12" y2="12" />
+                <line x1="12" y1="8" x2="12.01" y2="8" />
+              </svg>
             </div>
             <div className="amount-block" style={{ marginTop: '4px', padding: '14px 16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
