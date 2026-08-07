@@ -2140,7 +2140,9 @@ export default function P2PPanel({ connected, walletTokenList }) {
       const depositPubkey = new PublicKey(order.address);
 
       if (liveSelectedToken.symbol === 'SOL') {
-        const lamports = Math.round((order.amount || baseCryptoAmount) * 1e9);
+        // Always use baseCryptoAmount (net + 0.5% fee). order.amount from PajCash
+        // is the net-only deposit amount and does not include our platform fee.
+        const lamports = Math.round(baseCryptoAmount * 1e9);
         transaction.add(
           SystemProgram.transfer({ fromPubkey: publicKey, toPubkey: depositPubkey, lamports })
         );
@@ -2180,7 +2182,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
           decimals = mintInfo.value.data.parsed.info.decimals;
         }
 
-        const sendAmount = order.amount || baseCryptoAmount;
+        // Always use baseCryptoAmount (net + 0.5% fee).
+        const sendAmount = baseCryptoAmount;
         const units = BigInt(Math.round(sendAmount * Math.pow(10, decimals)));
 
         transaction.add(
@@ -2247,7 +2250,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
           fallbackTx.recentBlockhash = (await connection.getLatestBlockhash('confirmed')).blockhash;
 
           if (liveSelectedToken.symbol === 'SOL') {
-            const lamports = Math.round((order.amount || baseCryptoAmount) * 1e9);
+            const lamports = Math.round(baseCryptoAmount * 1e9);
             fallbackTx.add(SystemProgram.transfer({ fromPubkey: publicKey, toPubkey: depositPubkey, lamports }));
           } else {
             const mintPubkey = new PublicKey(liveSelectedToken.mint);
@@ -2262,7 +2265,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
             }
             const senderATA = getAssociatedTokenAddressSync(mintPubkey, publicKey, false, tokenProgram);
             const receiverATA = getAssociatedTokenAddressSync(mintPubkey, depositPubkey, false, tokenProgram);
-            const sendAmount = order.amount || baseCryptoAmount;
+            // Always use baseCryptoAmount (net + 0.5% fee).
+            const sendAmount = baseCryptoAmount;
             let decimals = typeof liveSelectedToken.decimals === 'number' ? liveSelectedToken.decimals : 6;
             const units = BigInt(Math.round(sendAmount * Math.pow(10, decimals)));
 
@@ -2324,7 +2328,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
       // Number(amount) which is the raw input string and is wrong when the
       // user typed in crypto mode (e.g. typing "2" USDC logged fiatLogged=2
       // instead of the correct NGN equivalent like 3100).
-      const cryptoLogged = order.amount || baseCryptoAmount;
+      const cryptoLogged = baseCryptoAmount;
       const fiatLogged = parsedAmt; // parsedAmt = input converted to fiat regardless of inputMode
       const usdLogged = selectedCountry.currency === 'USD'
         ? fiatLogged
