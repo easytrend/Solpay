@@ -1093,14 +1093,14 @@ export default function P2PPanel({ connected, walletTokenList }) {
   // NOTE: Success card is intentionally NOT auto-closed.
   // It stays visible until the user clicks "Done".
 
-  // ── Gather all unique past accounts from Supabase history & localStorage ──
+  // ── Gather all unique past accounts (Supabase history + all localStorage keys) ──
   const pastAccounts = useMemo(() => {
     const list = [];
     const seen = new Set();
 
     const addAccount = (acct, bank, name) => {
-      if (!acct || typeof acct !== 'string') return;
-      const cleanAcct = acct.replace(/\D/g, '').trim();
+      if (!acct || (typeof acct !== 'string' && typeof acct !== 'number')) return;
+      const cleanAcct = String(acct).replace(/\D/g, '').trim();
       if (cleanAcct.length < 8) return;
       const bankStr = (bank && typeof bank === 'string' && bank !== 'Choose Bank') ? bank : '';
       const key = `${cleanAcct}_${bankStr}`;
@@ -1124,22 +1124,25 @@ export default function P2PPanel({ connected, walletTokenList }) {
       });
     }
 
-    // 2. From localStorage
-    if (publicKey) {
-      try {
-        const walletKey = publicKey.toBase58();
-        const localOrders = JSON.parse(localStorage.getItem(`paj_user_orders_${walletKey}`) || '[]');
-        if (Array.isArray(localOrders)) {
-          localOrders.forEach(o => {
-            addAccount(o.account || o.accountNumber, o.bank || o.bankName, o.name || o.accountName);
-          });
+    // 2. Scan ALL localStorage keys to never miss any saved account on device
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k) continue;
+        if (k.startsWith('paj_user_orders_')) {
+          const orders = JSON.parse(localStorage.getItem(k) || '[]');
+          if (Array.isArray(orders)) {
+            orders.forEach(o => addAccount(o.account || o.accountNumber, o.bank || o.bankName, o.name || o.accountName));
+          }
+        } else if (k.startsWith('paj_account_number_')) {
+          const suffix = k.replace('paj_account_number_', '');
+          const acct = localStorage.getItem(k);
+          const bank = localStorage.getItem(`paj_bank_name_${suffix}`);
+          const name = localStorage.getItem(`paj_account_name_${suffix}`);
+          if (acct) addAccount(acct, bank, name);
         }
-        const singleAcc = localStorage.getItem(`paj_account_number_${walletKey}`);
-        const singleBank = localStorage.getItem(`paj_bank_name_${walletKey}`);
-        const singleName = localStorage.getItem(`paj_account_name_${walletKey}`);
-        if (singleAcc) addAccount(singleAcc, singleBank, singleName);
-      } catch {}
-    }
+      }
+    } catch {}
 
     return list;
   }, [payoutLogs, publicKey]);
@@ -1172,6 +1175,37 @@ export default function P2PPanel({ connected, walletTokenList }) {
     }
     setIsAcctInputFocused(false);
   }, [apiBanks]);
+
+  // ── Auto-pop bank & account name on first 3+ digits ──
+  const autoPoppedRef = useRef('');
+
+  useEffect(() => {
+    if (cleanAcctInput.length >= 3 && cleanAcctInput.length < 10) {
+      if (matchingPastAccounts.length >= 1) {
+        const topMatch = matchingPastAccounts[0];
+        if (autoPoppedRef.current !== cleanAcctInput && topMatch) {
+          autoPoppedRef.current = cleanAcctInput;
+          if (topMatch.bankName && topMatch.bankName !== 'Choose Bank' && topMatch.bankName !== 'Saved Account' && selectedBank === 'Choose Bank') {
+            const match = apiBanks.find(b => {
+              const bName = typeof b === 'string' ? b : (b.name || b.bank_name || b.code || '');
+              return bName.toLowerCase().includes(topMatch.bankName.toLowerCase()) || topMatch.bankName.toLowerCase().includes(bName.toLowerCase());
+            });
+            if (match) {
+              const matchedName = typeof match === 'string' ? match : (match.name || match.bank_name);
+              setSelectedBank(matchedName);
+            } else {
+              setSelectedBank(topMatch.bankName);
+            }
+          }
+          if (topMatch.accountName && !accountName) {
+            setAccountName(topMatch.accountName);
+          }
+        }
+      }
+    } else if (cleanAcctInput.length < 3) {
+      autoPoppedRef.current = '';
+    }
+  }, [cleanAcctInput, matchingPastAccounts, apiBanks, selectedBank, accountName]);
 
   // ── Routing animation ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -2275,6 +2309,12 @@ export default function P2PPanel({ connected, walletTokenList }) {
         name: accountName || 'Account Holder'
       });
       localStorage.setItem(`paj_user_orders_${walletKey}`, JSON.stringify(existing.slice(0, 100)));
+      localStorage.setItem(`paj_account_number_${walletKey}`, accountNumber.trim());
+      localStorage.setItem(`paj_bank_name_${walletKey}`, displayBank);
+      localStorage.setItem(`paj_account_name_${walletKey}`, accountName || 'Account Holder');
+      localStorage.setItem(`paj_account_number_default`, accountNumber.trim());
+      localStorage.setItem(`paj_bank_name_default`, displayBank);
+      localStorage.setItem(`paj_account_name_default`, accountName || 'Account Holder');
 
       // BUG FIX 1: Use parsedAmt (always the fiat-side value) instead of
       // Number(amount) which is the raw input string and is wrong when the
