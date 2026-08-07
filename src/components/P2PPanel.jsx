@@ -1435,11 +1435,10 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const parsedAmt = offrampInputMode === 'crypto' ? parsedAmtRaw * ngnRate : parsedAmtRaw;
   const estCryptoAmount = offrampInputMode === 'fiat' ? (ngnRate > 0 ? parsedAmt / ngnRate : 0) : parsedAmtRaw;
 
-  // ── Platform Fee: $0.10 in CRYPTO on every On/Offramp ──────────────────────
-  // ── Offramp fee (crypto-side, unchanged) ───────────────────────────────────
-  const PLATFORM_FEE_USD = 0.10;
-  const platformFeeInToken = tokenPriceUsd > 0 ? PLATFORM_FEE_USD / tokenPriceUsd : 0;
-  const platformFee = PLATFORM_FEE_USD;
+  // ── Platform Fee: 0.5% of crypto amount on every Offramp ────────────────────
+  const PLATFORM_FEE_PCT = 0.005; // 0.5%
+  const platformFeeInToken = estCryptoAmount * PLATFORM_FEE_PCT;
+  const platformFee = platformFeeInToken * tokenPriceUsd;
   const baseCryptoAmount = estCryptoAmount + platformFeeInToken;
   const fiatAmountText = parsedAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -2278,7 +2277,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
       // Show modal immediately with PENDING status
       setSuccessDetails({
-        amount: `${estCryptoAmount.toFixed(4)} ${liveSelectedToken.symbol}`,
+        amount: `${baseCryptoAmount.toFixed(4)} ${liveSelectedToken.symbol}`,
         fiat: `${selectedCountry.symbol}${fiatAmountText}`,
         bank: displayBank,
         account: accountNumber,
@@ -2946,15 +2945,18 @@ export default function P2PPanel({ connected, walletTokenList }) {
             {/* Amount + Token Row */}
             <div style={{ marginBottom: '0.95rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
-                <div className="field-label" style={{ marginBottom: 0, textTransform: 'none', fontSize: '13px', fontWeight: '500', color: 'rgba(255,255,255,0.6)', letterSpacing: 'normal' }}>
+              <div className="field-label" style={{ marginBottom: 0, textTransform: 'none', fontSize: '13px', fontWeight: '600', color: 'var(--lime)', letterSpacing: 'normal' }}>
                   Amount
                 </div>
-                {/* Clickable tooltip */}
-                <div style={{ position: 'relative', display: 'inline-flex' }}>
+              {/* Clickable fee tooltip */}
+                <div
+                  style={{ position: 'relative', display: 'inline-flex', cursor: 'pointer' }}
+                  onClick={() => setShowAmountTooltip(v => !v)}
+                >
                   <svg
-                    width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                     strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-                    style={{ color: 'rgba(255,255,255,0.15)', cursor: 'default' }}
+                    style={{ color: 'var(--lime)', filter: 'drop-shadow(0 0 4px rgba(163,230,53,0.5))' }}
                   >
                     <circle cx="12" cy="12" r="10" />
                     <line x1="12" y1="16" x2="12" y2="12" />
@@ -2962,16 +2964,16 @@ export default function P2PPanel({ connected, walletTokenList }) {
                   </svg>
                   {showAmountTooltip && (
                     <div
-                      onClick={() => setShowAmountTooltip(false)}
+                      onClick={e => { e.stopPropagation(); setShowAmountTooltip(false); }}
                       style={{
-                        position: 'absolute', bottom: '18px', left: '50%', transform: 'translateX(-50%)',
-                        background: 'rgba(20,20,30,0.97)', border: '1px solid rgba(255,255,255,0.12)',
-                        borderRadius: '8px', padding: '8px 12px', fontSize: '11px', color: 'rgba(255,255,255,0.85)',
-                        width: '220px', lineHeight: '1.5', zIndex: 200, cursor: 'pointer',
-                        boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+                        position: 'absolute', bottom: '20px', left: '50%', transform: 'translateX(-50%)',
+                        background: 'rgba(20,20,30,0.97)', border: '1px solid rgba(163,230,53,0.25)',
+                        borderRadius: '10px', padding: '10px 14px', fontSize: '11px', color: 'rgba(255,255,255,0.85)',
+                        width: '230px', lineHeight: '1.6', zIndex: 200, cursor: 'pointer',
+                        boxShadow: '0 4px 24px rgba(0,0,0,0.6)',
                       }}
                     >
-                      ℹ️ Note that fiatwallet charges <strong>0.1 USD</strong>
+                      💚 fiatwallet takes a <strong style={{ color: 'var(--lime)' }}>0.5% protocol fee</strong> to serve you better.
                     </div>
                   )}
                 </div>
@@ -3129,8 +3131,9 @@ export default function P2PPanel({ connected, walletTokenList }) {
                       <button
                         type="button"
                         onClick={() => {
-                          const feeInToken = tokenPriceUsd > 0 ? PLATFORM_FEE_USD / tokenPriceUsd : 0.10;
-                          const maxCrypto = Math.max(0, (liveSelectedToken.balance || 0) - feeInToken);
+                          const balance = liveSelectedToken.balance || 0;
+                          // Reserve 0.5% for fee: maxSendable = balance / 1.005
+                          const maxCrypto = balance > 0 ? balance / 1.005 : 0;
                           if (offrampInputMode === 'crypto') {
                             setAmount(maxCrypto > 0 ? maxCrypto.toFixed(4) : '0');
                           } else {
@@ -3165,17 +3168,12 @@ export default function P2PPanel({ connected, walletTokenList }) {
                 </div>
               </div>
 
-              {/* Exchange rate — shown without 'Rate:' prefix */}
+              {/* Exchange rate */}
               {pajRates?.offRampRate?.rate && (
                 <div style={{ marginTop: '6px', fontSize: '11px' }}>
                   <span style={{ color: 'rgba(255,255,255,0.38)' }}>
                     1 {liveSelectedToken.symbol} = {selectedCountry.symbol}{ngnRate.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </span>
-                  {amount && Number(amount) > 0 && (
-                    <span style={{ display: 'block', marginTop: '3px', color: 'var(--lime)', fontWeight: '600', fontSize: '10.5px', letterSpacing: '0.01em' }}>
-                      +fee $0.10
-                    </span>
-                  )}
                 </div>
               )}
             </div>
@@ -3283,7 +3281,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
                       boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
                     }}
                   >
-                    ℹ️ Note that fiatwallet charges <strong>0.1 USD</strong>
+                    💚 fiatwallet takes a <strong style={{ color: 'var(--lime)' }}>0.5% protocol fee</strong> to serve you better.
                   </div>
                 )}
               </div>
