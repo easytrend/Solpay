@@ -1147,14 +1147,25 @@ export default function P2PPanel({ connected, walletTokenList }) {
     return list;
   }, [payoutLogs, publicKey]);
 
-  // ── Matching accounts based on first 3+ digits typed ──
-  const cleanAcctInput = accountNumber.replace(/\D/g, '').trim();
+  // ── Matching accounts based on 3+ characters (account number, account name, or bank name) ──
+  const acctQueryText = accountNumber.trim().toLowerCase();
+  const cleanAcctDigits = accountNumber.replace(/\D/g, '').trim();
+
   const matchingPastAccounts = useMemo(() => {
-    if (cleanAcctInput.length < 3) return [];
-    return pastAccounts.filter(acc =>
-      acc.accountNumber.startsWith(cleanAcctInput) || acc.accountNumber.includes(cleanAcctInput)
-    );
-  }, [pastAccounts, cleanAcctInput]);
+    if (acctQueryText.length < 3) return [];
+    return pastAccounts.filter(acc => {
+      // 1. Match numeric account number (e.g. "012")
+      const matchNum = cleanAcctDigits.length >= 3 && (
+        acc.accountNumber.startsWith(cleanAcctDigits) || acc.accountNumber.includes(cleanAcctDigits)
+      );
+      // 2. Match account holder name (e.g. "joh" matching "John Doe")
+      const matchName = acc.accountName && acc.accountName.toLowerCase().includes(acctQueryText);
+      // 3. Match bank name (e.g. "gtb" matching "GTBank")
+      const matchBank = acc.bankName && acc.bankName.toLowerCase().includes(acctQueryText);
+
+      return matchNum || matchName || matchBank;
+    });
+  }, [pastAccounts, acctQueryText, cleanAcctDigits]);
 
   const handleSelectPastAccount = useCallback((acc) => {
     setAccountNumber(acc.accountNumber);
@@ -1180,7 +1191,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const autoPoppedRef = useRef('');
 
   useEffect(() => {
-    if (cleanAcctInput.length >= 3 && cleanAcctInput.length < 10) {
+    const isPureDigits = /^\d+$/.test(accountNumber.trim());
+    if (isPureDigits && cleanAcctDigits.length >= 3 && cleanAcctDigits.length < 10) {
       // ONLY auto-fill automatically if there is EXACTLY 1 matching past account.
       // If there are multiple matching accounts, do NOT auto-overwrite so the user
       // can see all matching options in the popup list and tap the one they want.
@@ -1209,10 +1221,10 @@ export default function P2PPanel({ connected, walletTokenList }) {
           }
         }
       }
-    } else if (cleanAcctInput.length < 3) {
+    } else if (cleanAcctDigits.length < 3) {
       autoPoppedRef.current = '';
     }
-  }, [cleanAcctInput, matchingPastAccounts, apiBanks]);
+  }, [accountNumber, cleanAcctDigits, matchingPastAccounts, apiBanks]);
 
   // ── Routing animation ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -2106,7 +2118,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
       const order = await createOfframpOrder(
         {
           bank: bankId,
-          accountNumber: accountNumber.trim(),
+          accountNumber: accountNumber.replace(/\D/g, '').trim(),
           currency: selectedCountry.currency,
           fiatAmount: parsedAmt,
           mint: liveSelectedToken.mint,
@@ -2944,18 +2956,18 @@ export default function P2PPanel({ connected, walletTokenList }) {
                     type="text"
                     value={accountNumber}
                     onChange={e => {
-                      setAccountNumber(e.target.value.replace(/\D/g, ''));
+                      setAccountNumber(e.target.value);
                       setIsAcctInputFocused(true);
                     }}
                     onFocus={() => setIsAcctInputFocused(true)}
                     onBlur={() => setTimeout(() => setIsAcctInputFocused(false), 250)}
-                    placeholder="0000000000"
+                    placeholder="Enter 10-digit number or search name..."
                     disabled={!canTransact}
                   />
                 </div>
 
-                {/* ── Auto-pop matching previous accounts card (>= 3 digits) ── */}
-                {isAcctInputFocused && cleanAcctInput.length >= 3 && matchingPastAccounts.length > 0 && (
+                {/* ── Auto-pop matching previous accounts card (>= 3 chars typed) ── */}
+                {isAcctInputFocused && acctQueryText.length >= 3 && matchingPastAccounts.length > 0 && (
                   <div
                     className="p2p-account-suggestions"
                     style={{
