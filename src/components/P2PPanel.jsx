@@ -3139,10 +3139,11 @@ export default function P2PPanel({ connected, walletTokenList }) {
                       onClick={e => { e.stopPropagation(); setShowAmountTooltip(false); }}
                       style={{
                         position: 'absolute', bottom: '24px', left: '-6px',
-                        background: 'rgba(20,20,30,0.97)', border: '1px solid rgba(163,230,53,0.3)',
-                        borderRadius: '12px', padding: '12px 24px 10px 14px', fontSize: '11px', color: 'rgba(255,255,255,0.9)',
+                        background: 'var(--card)', border: '1px solid var(--border)',
+                        borderRadius: '12px', padding: '12px 24px 10px 14px', fontSize: '11px', color: 'var(--text)',
                         width: '230px', maxWidth: 'calc(100vw - 60px)', lineHeight: '1.6', zIndex: 300, cursor: 'pointer',
-                        boxShadow: '0 8px 28px rgba(0,0,0,0.7)', textAlign: 'center',
+                        boxShadow: '0 10px 30px rgba(0, 0, 0, 0.6), 0 0 15px rgba(163, 230, 53, 0.1)',
+                        backdropFilter: 'blur(16px)', textAlign: 'center',
                       }}
                     >
                       <button
@@ -3150,7 +3151,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
                         onClick={(e) => { e.stopPropagation(); setShowAmountTooltip(false); }}
                         style={{
                           position: 'absolute', top: '6px', right: '8px', background: 'none',
-                          border: 'none', color: 'rgba(255,255,255,0.4)', fontSize: '12px',
+                          border: 'none', color: 'var(--text3)', fontSize: '12px',
                           cursor: 'pointer', padding: '2px', lineHeight: 1
                         }}
                       >
