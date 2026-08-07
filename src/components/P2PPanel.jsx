@@ -1181,7 +1181,10 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
   useEffect(() => {
     if (cleanAcctInput.length >= 3 && cleanAcctInput.length < 10) {
-      if (matchingPastAccounts.length >= 1) {
+      // ONLY auto-fill automatically if there is EXACTLY 1 matching past account.
+      // If there are multiple matching accounts, do NOT auto-overwrite so the user
+      // can see all matching options in the popup list and tap the one they want.
+      if (matchingPastAccounts.length === 1) {
         const topMatch = matchingPastAccounts[0];
         if (autoPoppedRef.current !== topMatch.accountNumber && topMatch && topMatch.accountNumber) {
           autoPoppedRef.current = topMatch.accountNumber;
@@ -2915,7 +2918,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
         ) : (
           <>
             {/* Account Number — shown first */}
-            <div className="field">
+            <div className="field" style={{ position: 'relative', zIndex: (isAcctInputFocused && cleanAcctInput.length >= 3 && matchingPastAccounts.length > 0) ? 1200 : 2 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                 <div className="field-label" style={{ marginBottom: 0 }}>Account Number</div>
                 <div style={{ display: 'flex', gap: '8px' }}>
@@ -2934,83 +2937,89 @@ export default function P2PPanel({ connected, walletTokenList }) {
                   </button>
                 </div>
               </div>
-              <div className="input-wrap" style={{ opacity: canTransact ? 1 : 0.6 }}>
-                <input
-                  type="text"
-                  value={accountNumber}
-                  onChange={e => {
-                    setAccountNumber(e.target.value.replace(/\D/g, ''));
-                    setIsAcctInputFocused(true);
-                  }}
-                  onFocus={() => setIsAcctInputFocused(true)}
-                  onBlur={() => setTimeout(() => setIsAcctInputFocused(false), 200)}
-                  placeholder="0000000000"
-                  disabled={!canTransact}
-                />
-              </div>
 
-              {/* ── Auto-pop matching previous accounts card (>= 3 digits) ── */}
-              {isAcctInputFocused && cleanAcctInput.length >= 3 && matchingPastAccounts.length > 0 && (
-                <div
-                  className="p2p-account-suggestions"
-                  style={{
-                    position: 'absolute',
-                    top: 'calc(100% - 14px)',
-                    left: 0,
-                    right: 0,
-                    background: 'rgba(18, 22, 31, 0.98)',
-                    border: '1px solid rgba(163, 230, 53, 0.35)',
-                    borderRadius: '14px',
-                    padding: '8px',
-                    zIndex: 500,
-                    boxShadow: '0 12px 36px rgba(0,0,0,0.85), 0 0 20px rgba(163, 230, 53, 0.15)',
-                    maxHeight: '220px',
-                    overflowY: 'auto',
-                    backdropFilter: 'blur(16px)',
-                  }}
-                >
-                  <div style={{ padding: '4px 8px 6px 8px', fontSize: '10px', fontWeight: '700', color: 'var(--lime)', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span>⚡ Previous Accounts</span>
-                    <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)', textTransform: 'none' }}>Tap to auto-fill</span>
-                  </div>
-                  {matchingPastAccounts.map((acc, idx) => (
-                    <div
-                      key={`${acc.accountNumber}_${idx}`}
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        handleSelectPastAccount(acc);
-                      }}
-                      style={{
-                        padding: '10px 12px',
-                        borderRadius: '10px',
-                        background: 'rgba(255,255,255,0.03)',
-                        marginBottom: idx < matchingPastAccounts.length - 1 ? '4px' : 0,
-                        cursor: 'pointer',
-                        border: '1px solid rgba(255,255,255,0.06)',
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                      }}
-                    >
-                      <div>
-                        <div style={{ fontSize: '13px', fontWeight: '700', color: '#ffffff', letterSpacing: '0.04em', fontFamily: 'var(--mono)' }}>
-                          {acc.accountNumber}
-                        </div>
-                        <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.55)', marginTop: '2px' }}>
-                          {acc.bankName}
-                        </div>
-                      </div>
-                      {acc.accountName && (
-                        <div style={{ textAlign: 'right', maxWidth: '140px' }}>
-                          <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--lime)', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {acc.accountName}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+              <div style={{ position: 'relative' }}>
+                <div className="input-wrap" style={{ opacity: canTransact ? 1 : 0.6 }}>
+                  <input
+                    type="text"
+                    value={accountNumber}
+                    onChange={e => {
+                      setAccountNumber(e.target.value.replace(/\D/g, ''));
+                      setIsAcctInputFocused(true);
+                    }}
+                    onFocus={() => setIsAcctInputFocused(true)}
+                    onBlur={() => setTimeout(() => setIsAcctInputFocused(false), 250)}
+                    placeholder="0000000000"
+                    disabled={!canTransact}
+                  />
                 </div>
-              )}
+
+                {/* ── Auto-pop matching previous accounts card (>= 3 digits) ── */}
+                {isAcctInputFocused && cleanAcctInput.length >= 3 && matchingPastAccounts.length > 0 && (
+                  <div
+                    className="p2p-account-suggestions"
+                    style={{
+                      position: 'absolute',
+                      top: 'calc(100% + 4px)',
+                      left: 0,
+                      right: 0,
+                      background: '#131822',
+                      border: '1px solid rgba(163, 230, 53, 0.4)',
+                      borderRadius: '14px',
+                      padding: '8px',
+                      zIndex: 1500,
+                      boxShadow: '0 16px 40px rgba(0,0,0,0.95), 0 0 25px rgba(163, 230, 53, 0.2)',
+                      maxHeight: '220px',
+                      overflowY: 'auto',
+                      backdropFilter: 'blur(16px)',
+                    }}
+                  >
+                    <div style={{ padding: '4px 8px 6px 8px', fontSize: '10px', fontWeight: '700', color: 'var(--lime)', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>⚡ Select Saved Account ({matchingPastAccounts.length})</span>
+                      <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)', textTransform: 'none' }}>Tap to choose</span>
+                    </div>
+                    {matchingPastAccounts.map((acc, idx) => (
+                      <div
+                        key={`${acc.accountNumber}_${idx}`}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          handleSelectPastAccount(acc);
+                        }}
+                        style={{
+                          padding: '10px 12px',
+                          borderRadius: '10px',
+                          background: 'rgba(255,255,255,0.05)',
+                          marginBottom: idx < matchingPastAccounts.length - 1 ? '4px' : 0,
+                          cursor: 'pointer',
+                          border: '1px solid rgba(255,255,255,0.08)',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          transition: 'background 0.15s, border-color 0.15s',
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.background = 'rgba(163, 230, 53, 0.12)'}
+                        onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
+                      >
+                        <div>
+                          <div style={{ fontSize: '13px', fontWeight: '700', color: '#ffffff', letterSpacing: '0.04em', fontFamily: 'var(--mono)' }}>
+                            {acc.accountNumber}
+                          </div>
+                          <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginTop: '2px' }}>
+                            {acc.bankName}
+                          </div>
+                        </div>
+                        {acc.accountName && (
+                          <div style={{ textAlign: 'right', maxWidth: '140px' }}>
+                            <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--lime)', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {acc.accountName}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               <div style={{ marginTop: '6px', minHeight: '16px', fontSize: '12px', color: 'var(--lime)', fontWeight: 'bold' }}>
                 {accountNumber && selectedBank !== 'Choose Bank' && (
