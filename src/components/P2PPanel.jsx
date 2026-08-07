@@ -1519,7 +1519,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
   // ── Validation: Offramp insufficient balance ────────────────────────────────
   const walletBalance = liveSelectedToken.balance || 0;
-  const offrampExceedsBalance = parsedAmt > 0 && baseCryptoAmount > walletBalance;
+  const offrampExceedsBalance = parsedAmt > 0 && baseCryptoAmount > (walletBalance + 0.0001);
 
   const isFormValid =
     !!sessionToken &&
@@ -2945,10 +2945,10 @@ export default function P2PPanel({ connected, walletTokenList }) {
             {/* Amount + Token Row */}
             <div style={{ marginBottom: '0.95rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
-              <div className="field-label" style={{ marginBottom: 0, textTransform: 'none', fontSize: '13px', fontWeight: '600', color: 'var(--lime)', letterSpacing: 'normal' }}>
+                <div className="field-label" style={{ marginBottom: 0, textTransform: 'none', fontSize: '13px', fontWeight: '500', color: 'rgba(255,255,255,0.6)', letterSpacing: 'normal' }}>
                   Amount
                 </div>
-              {/* Clickable fee tooltip */}
+                {/* Clickable fee tooltip */}
                 <div
                   style={{ position: 'relative', display: 'inline-flex', cursor: 'pointer' }}
                   onClick={() => setShowAmountTooltip(v => !v)}
@@ -2966,13 +2966,24 @@ export default function P2PPanel({ connected, walletTokenList }) {
                     <div
                       onClick={e => { e.stopPropagation(); setShowAmountTooltip(false); }}
                       style={{
-                        position: 'absolute', bottom: '20px', left: '50%', transform: 'translateX(-50%)',
-                        background: 'rgba(20,20,30,0.97)', border: '1px solid rgba(163,230,53,0.25)',
-                        borderRadius: '10px', padding: '10px 14px', fontSize: '11px', color: 'rgba(255,255,255,0.85)',
-                        width: '230px', lineHeight: '1.6', zIndex: 200, cursor: 'pointer',
-                        boxShadow: '0 4px 24px rgba(0,0,0,0.6)',
+                        position: 'absolute', bottom: '22px', left: '50%', transform: 'translateX(-50%)',
+                        background: 'rgba(20,20,30,0.97)', border: '1px solid rgba(163,230,53,0.3)',
+                        borderRadius: '12px', padding: '12px 24px 10px 14px', fontSize: '11px', color: 'rgba(255,255,255,0.9)',
+                        width: '240px', lineHeight: '1.6', zIndex: 300, cursor: 'pointer',
+                        boxShadow: '0 8px 28px rgba(0,0,0,0.7)', textAlign: 'center',
                       }}
                     >
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setShowAmountTooltip(false); }}
+                        style={{
+                          position: 'absolute', top: '6px', right: '8px', background: 'none',
+                          border: 'none', color: 'rgba(255,255,255,0.4)', fontSize: '12px',
+                          cursor: 'pointer', padding: '2px', lineHeight: 1
+                        }}
+                      >
+                        ✕
+                      </button>
                       💚 fiatwallet takes a <strong style={{ color: 'var(--lime)' }}>0.5% protocol fee</strong> to serve you better.
                     </div>
                   )}
@@ -3132,13 +3143,17 @@ export default function P2PPanel({ connected, walletTokenList }) {
                         type="button"
                         onClick={() => {
                           const balance = liveSelectedToken.balance || 0;
-                          // Reserve 0.5% for fee: maxSendable = balance / 1.005
-                          const maxCrypto = balance > 0 ? balance / 1.005 : 0;
+                          if (balance <= 0) {
+                            setAmount('0');
+                            return;
+                          }
+                          const rawMaxCrypto = balance / 1.005;
                           if (offrampInputMode === 'crypto') {
-                            setAmount(maxCrypto > 0 ? maxCrypto.toFixed(4) : '0');
+                            const maxCrypto = Math.floor(rawMaxCrypto * 10000) / 10000;
+                            setAmount(maxCrypto > 0 ? maxCrypto.toString() : '0');
                           } else {
-                            const maxFiat = maxCrypto * ngnRate;
-                            setAmount(maxFiat > 0 ? maxFiat.toFixed(2) : '0');
+                            const maxFiat = Math.floor((rawMaxCrypto * ngnRate) * 100) / 100;
+                            setAmount(maxFiat > 0 ? maxFiat.toString() : '0');
                           }
                         }}
                         disabled={!canTransact}
@@ -3272,15 +3287,26 @@ export default function P2PPanel({ connected, walletTokenList }) {
                 </svg>
                 {showOnrampTooltip && (
                   <div
-                    onClick={() => setShowOnrampTooltip(false)}
+                    onClick={e => { e.stopPropagation(); setShowOnrampTooltip(false); }}
                     style={{
-                      position: 'absolute', bottom: '18px', left: '50%', transform: 'translateX(-50%)',
-                      background: 'rgba(20,20,30,0.97)', border: '1px solid rgba(255,255,255,0.12)',
-                      borderRadius: '8px', padding: '8px 12px', fontSize: '11px', color: 'rgba(255,255,255,0.85)',
-                      width: '220px', lineHeight: '1.5', zIndex: 200, cursor: 'pointer',
-                      boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+                      position: 'absolute', bottom: '22px', left: '50%', transform: 'translateX(-50%)',
+                      background: 'rgba(20,20,30,0.97)', border: '1px solid rgba(163,230,53,0.3)',
+                      borderRadius: '12px', padding: '12px 24px 10px 14px', fontSize: '11px', color: 'rgba(255,255,255,0.9)',
+                      width: '240px', lineHeight: '1.6', zIndex: 300, cursor: 'pointer',
+                      boxShadow: '0 8px 28px rgba(0,0,0,0.7)', textAlign: 'center',
                     }}
                   >
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setShowOnrampTooltip(false); }}
+                      style={{
+                        position: 'absolute', top: '6px', right: '8px', background: 'none',
+                        border: 'none', color: 'rgba(255,255,255,0.4)', fontSize: '12px',
+                        cursor: 'pointer', padding: '2px', lineHeight: 1
+                      }}
+                    >
+                      ✕
+                    </button>
                     💚 fiatwallet takes a <strong style={{ color: 'var(--lime)' }}>0.5% protocol fee</strong> to serve you better.
                   </div>
                 )}
