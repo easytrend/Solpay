@@ -1532,10 +1532,9 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const parsedAmt = offrampInputMode === 'crypto' ? parsedAmtRaw * ngnRate : parsedAmtRaw;
   const estCryptoAmount = offrampInputMode === 'fiat' ? (ngnRate > 0 ? parsedAmt / ngnRate : 0) : parsedAmtRaw;
 
-  // ── Platform Fee: 0.5% of crypto amount on every Offramp ────────────────────
-  const PLATFORM_FEE_PCT = 0.005; // 0.5%
-  const platformFeeInToken = estCryptoAmount * PLATFORM_FEE_PCT;
-  const platformFee = platformFeeInToken * tokenPriceUsd;
+  // ── Platform Fee: flat $0.10 USD on every Offramp ────────────────────
+  const platformFee = 0.10; // $0.10 USD flat fee
+  const platformFeeInToken = tokenPriceUsd > 0 ? platformFee / tokenPriceUsd : 0;
   const baseCryptoAmount = estCryptoAmount + platformFeeInToken;
   const fiatAmountText = parsedAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -2093,19 +2092,14 @@ export default function P2PPanel({ connected, walletTokenList }) {
     setSubmitting(true);
     try {
       const balance = liveSelectedToken.balance || 0;
-      if (baseCryptoAmount > balance) {
-        throw new Error(`Insufficient ${liveSelectedToken.symbol} balance. You have ${balance.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${liveSelectedToken.symbol} but need ${baseCryptoAmount.toFixed(4)} ${liveSelectedToken.symbol}.`);
+      if (estCryptoAmount > balance) {
+        throw new Error(`Insufficient ${liveSelectedToken.symbol} balance. You have ${balance.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${liveSelectedToken.symbol} but need ${estCryptoAmount.toFixed(4)} ${liveSelectedToken.symbol}.`);
       }
 
       const bankObj = apiBanks.find(b => getBankNameString(b) === selectedBank);
       const bankId = bankObj ? (bankObj.id || bankObj.code || bankObj.name) : selectedBank;
 
-      // 1. Create paj_ramp off-ramp order.
-      // We pass `fee: platformFee` (businessUSDCFee) so PajCash knows to cover
-      // their processing cost from the EXTRA crypto we send on-chain (baseCryptoAmount
-      // = net + 0.5%). Without this, PajCash deducts their processing fee (~0.5%)
-      // from the recipient's fiat payout instead. With it, recipient gets the full
-      // fiatAmount and the 0.5% fee is taken from the extra crypto on-chain.
+      // 1. Create paj_ramp off-ramp order
       const order = await createOfframpOrder(
         {
           bank: bankId,
@@ -2145,9 +2139,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
       const depositPubkey = new PublicKey(order.address);
 
       if (liveSelectedToken.symbol === 'SOL') {
-        // Always use baseCryptoAmount (net + 0.5% fee). order.amount from PajCash
-        // is the net-only deposit amount and does not include our platform fee.
-        const lamports = Math.round(baseCryptoAmount * 1e9);
+        const lamports = Math.round((order.amount || estCryptoAmount) * 1e9);
         transaction.add(
           SystemProgram.transfer({ fromPubkey: publicKey, toPubkey: depositPubkey, lamports })
         );
@@ -2187,8 +2179,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
           decimals = mintInfo.value.data.parsed.info.decimals;
         }
 
-        // Always use baseCryptoAmount (net + 0.5% fee).
-        const sendAmount = baseCryptoAmount;
+        const sendAmount = order.amount || estCryptoAmount;
         const units = BigInt(Math.round(sendAmount * Math.pow(10, decimals)));
 
         transaction.add(
@@ -2255,7 +2246,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
           fallbackTx.recentBlockhash = (await connection.getLatestBlockhash('confirmed')).blockhash;
 
           if (liveSelectedToken.symbol === 'SOL') {
-            const lamports = Math.round(baseCryptoAmount * 1e9);
+            const lamports = Math.round((order.amount || estCryptoAmount) * 1e9);
             fallbackTx.add(SystemProgram.transfer({ fromPubkey: publicKey, toPubkey: depositPubkey, lamports }));
           } else {
             const mintPubkey = new PublicKey(liveSelectedToken.mint);
@@ -2270,8 +2261,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
             }
             const senderATA = getAssociatedTokenAddressSync(mintPubkey, publicKey, false, tokenProgram);
             const receiverATA = getAssociatedTokenAddressSync(mintPubkey, depositPubkey, false, tokenProgram);
-            // Always use baseCryptoAmount (net + 0.5% fee).
-            const sendAmount = baseCryptoAmount;
+            const sendAmount = order.amount || estCryptoAmount;
             let decimals = typeof liveSelectedToken.decimals === 'number' ? liveSelectedToken.decimals : 6;
             const units = BigInt(Math.round(sendAmount * Math.pow(10, decimals)));
 
@@ -2333,7 +2323,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
       // Number(amount) which is the raw input string and is wrong when the
       // user typed in crypto mode (e.g. typing "2" USDC logged fiatLogged=2
       // instead of the correct NGN equivalent like 3100).
-      const cryptoLogged = baseCryptoAmount;
+      const cryptoLogged = order.amount || estCryptoAmount;
       const fiatLogged = parsedAmt; // parsedAmt = input converted to fiat regardless of inputMode
       const usdLogged = selectedCountry.currency === 'USD'
         ? fiatLogged
@@ -3166,7 +3156,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
                       >
                         ✕
                       </button>
-                      fiatwallet takes a <strong style={{ color: 'var(--lime)' }}>0.5% protocol fee</strong> to serve you better.
+                      fiatwallet takes a <strong style={{ color: 'var(--lime)' }}>$0.10 USD flat fee</strong> to serve you better.
                     </div>
                   )}
                 </div>
