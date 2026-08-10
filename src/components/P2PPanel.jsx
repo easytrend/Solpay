@@ -2481,7 +2481,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
         ts: Date.now(),
         bank: displayBank,
         account: accountNumber.trim(),
-        name: accountName || 'Account Holder'
+        name: accountName || 'Account Holder',
+        recipient_tag: offrampSubMode === 'tag' ? recipientTagInput : undefined
       });
       localStorage.setItem(`paj_user_orders_${walletKey}`, JSON.stringify(existing.slice(0, 100)));
       localStorage.setItem(`paj_account_number_${walletKey}`, accountNumber.trim());
@@ -2559,6 +2560,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
         orderId: order.id,
         sig,
         status: 'PENDING',
+        recipientTag: offrampSubMode === 'tag' ? recipientTagInput : undefined
       });
       setShowSuccess(true);
 
