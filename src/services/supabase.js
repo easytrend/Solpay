@@ -408,11 +408,33 @@ export async function registerFiatTag({ walletAddress, tagName, bankName, bankCo
     updated_at: new Date().toISOString(),
   };
 
-  const { data, error } = await supabase
+  // 2. If this wallet already has a tag, update it; otherwise insert a new one.
+  //    We avoid .upsert() with onConflict because it requires a unique constraint
+  //    to exist on the DB column — which may not yet be present.
+  const { data: existingOwn } = await supabase
     .from('fiat_tags')
-    .upsert(payload, { onConflict: 'wallet_address' })
-    .select()
-    .single();
+    .select('id')
+    .eq('wallet_address', walletAddress)
+    .maybeSingle();
+
+  let data, error;
+
+  if (existingOwn?.id) {
+    // UPDATE the existing row for this wallet
+    ({ data, error } = await supabase
+      .from('fiat_tags')
+      .update(payload)
+      .eq('wallet_address', walletAddress)
+      .select()
+      .single());
+  } else {
+    // INSERT a brand new row
+    ({ data, error } = await supabase
+      .from('fiat_tags')
+      .insert(payload)
+      .select()
+      .single());
+  }
 
   if (error) {
     console.error('[Supabase] registerFiatTag error:', error.message);
