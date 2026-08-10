@@ -2725,7 +2725,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
       {/* Title Row with History Icon */}
       <div className="title-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
         <h2 className="card-title" style={{ margin: 0, fontSize: '1.25rem' }}>
-          {offrampSubMode === 'tag' ? 'Fiat Tag P2P' : 'P2P Trade'}
+          {offrampSubMode === 'tag' ? 'Fiat Tag' : 'P2P Trade'}
         </h2>
         {canTransact && publicKey && (
           <button 
