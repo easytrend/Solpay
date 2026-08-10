@@ -170,36 +170,57 @@ export async function updateP2PTransactionStatus(orderId, status, signature = nu
 /**
  * Sync PajCash API status back to Supabase for tracked P2P orders.
  */
-export async function syncP2PTransactionStatuses(orders = []) {
+export async function syncP2PTransactionStatuses(orders = [], walletAddress = null) {
   if (!supabase || !Array.isArray(orders) || orders.length === 0) return;
 
-  const updates = orders
-    .map((order) => {
-      const orderId = order.id || order._id || order.orderId;
-      const rawStatus = order.status || order.state;
-      const status = rawStatus ? String(rawStatus).toUpperCase() : null;
-      const signature = order.signature || order.txSignature || order.tx_hash;
-      if (!orderId || !status) return null;
-      return { order_id: String(orderId), status, signature: signature || null };
-    })
-    .filter(Boolean);
-
-  if (updates.length === 0) return;
-
   try {
-    await Promise.all(
-      updates.map(({ order_id, status, signature }) => {
-        const patch = { status, updated_at: new Date().toISOString() };
-        const byOrder = supabase.from('p2p_transactions').update(patch).eq('order_id', order_id);
-        if (signature) {
-          return Promise.all([
-            byOrder,
-            supabase.from('p2p_transactions').update(patch).eq('signature', signature),
-          ]);
+    for (const order of orders) {
+      const orderId = String(order.id || order._id || order.orderId || '');
+      if (!orderId) continue;
+
+      const rawStatus = order.status || order.state || 'PENDING';
+      const status = String(rawStatus).toUpperCase();
+      const signature = order.signature || order.sig || order.txSignature || order.tx_hash || null;
+      const userAddr = order.userAddress || order.user_address || walletAddress || null;
+
+      // Check if order already exists in Supabase
+      const { data: existing } = await supabase
+        .from('p2p_transactions')
+        .select('id, status')
+        .eq('order_id', orderId)
+        .maybeSingle();
+
+      if (existing) {
+        // Update status if it changed
+        if (existing.status !== 'FORWARDED_SUCCESS' && existing.status !== status) {
+          const patch = { status, updated_at: new Date().toISOString() };
+          if (signature) patch.signature = signature;
+          await supabase.from('p2p_transactions').update(patch).eq('order_id', orderId);
         }
-        return byOrder;
-      })
-    );
+      } else if (userAddr) {
+        // Order is missing from Supabase! Auto-backfill/insert it now.
+        const payload = {
+          order_id: orderId,
+          signature: signature || `pending_offramp_${orderId}`,
+          user_address: userAddr,
+          transaction_type: order.type || order.transaction_type || 'offramp',
+          token_symbol: order.tokenSymbol || order.token_symbol || 'USDC',
+          crypto_amount: parseFloat(order.cryptoAmount || order.amount) || 0,
+          fiat_currency: order.fiatCurrency || order.fiat_currency || 'NGN',
+          fiat_amount: parseFloat(order.fiatAmount || order.fiat_amount) || 0,
+          usd_value: parseFloat(order.usdValue || order.usd_value) || 0,
+          bank_name: order.bankName || order.bank || null,
+          account_number: order.accountNumber || order.account || null,
+          account_name: order.accountName || order.name || null,
+          recipient_tag: order.recipientTag || order.recipient_tag || null,
+          status,
+          updated_at: new Date().toISOString(),
+        };
+
+        await supabase.from('p2p_transactions').insert(payload);
+        console.log(`[Supabase] Auto-backfilled missing historical order ${orderId} into p2p_transactions`);
+      }
+    }
   } catch (err) {
     console.warn('[Supabase] syncP2PTransactionStatuses error:', err.message);
   }

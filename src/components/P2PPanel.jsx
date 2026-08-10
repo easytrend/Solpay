@@ -1014,7 +1014,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
       const allMergedTxs = Array.from(txMap.values());
       allMergedTxs.sort((a, b) => new Date(b.createdAt || b.created_at || 0) - new Date(a.createdAt || a.created_at || 0));
 
-      syncP2PTransactionStatuses(allMergedTxs);
+      syncP2PTransactionStatuses(allMergedTxs, walletKey);
       setPayoutLogs(allMergedTxs);
     } catch (e) {
       console.warn('Could not load payout history:', e);
