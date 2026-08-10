@@ -19,7 +19,7 @@ import {
   getTransaction,
 } from '../services/pajcashService';
 import { getQuote, buildSwapTransaction } from '../services/swapService';
-import { logP2PTransaction, syncP2PTransactionStatuses, updateP2PTransactionStatus, saveSession, loadSession, deleteSession, getP2PTransactionIdsByUser, getP2PTransactionsByUser } from '../services/supabase';
+import { logP2PTransaction, syncP2PTransactionStatuses, updateP2PTransactionStatus, saveSession, loadSession, deleteSession, getP2PTransactionIdsByUser, getP2PTransactionsByUser, getFiatTagByWallet, getFiatTagByName, registerFiatTag } from '../services/supabase';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { PublicKey, Transaction, TransactionInstruction, SystemProgram, VersionedTransaction } from '@solana/web3.js';
 import {
@@ -430,6 +430,23 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const [showAmountTooltip, setShowAmountTooltip] = useState(false);
   const [isAcctInputFocused, setIsAcctInputFocused] = useState(false);
   const [relayerActive, setRelayerActive] = useState(false);
+
+  // ── Fiat Tag (P2P Tag) State ─────────────────────────────────────────────
+  const [offrampSubMode, setOfframpSubMode] = useState('standard'); // 'standard' | 'tag'
+  const [userTagData, setUserTagData] = useState(null); // User's registered tag object
+  const [showTagModal, setShowTagModal] = useState(false);
+  const [tagModalInput, setTagModalInput] = useState('');
+  const [tagModalBank, setTagModalBank] = useState('Choose Bank');
+  const [tagModalAcctNumber, setTagModalAcctNumber] = useState('');
+  const [tagModalAcctName, setTagModalAcctName] = useState('');
+  const [tagModalResolving, setTagModalResolving] = useState(false);
+  const [tagModalSaving, setTagModalSaving] = useState(false);
+  const [tagModalError, setTagModalError] = useState(null);
+
+  const [recipientTagInput, setRecipientTagInput] = useState('');
+  const [resolvedTagData, setResolvedTagData] = useState(null);
+  const [resolvingTag, setResolvingTag] = useState(false);
+  const [tagLookupError, setTagLookupError] = useState(null);
 
   // ── Manual Release State for History Pop-up ──────────────────────────────
   const [releasingLogId, setReleasingLogId] = useState(null);
@@ -1225,6 +1242,146 @@ export default function P2PPanel({ connected, walletTokenList }) {
       autoPoppedRef.current = '';
     }
   }, [accountNumber, cleanAcctDigits, matchingPastAccounts, apiBanks]);
+
+  // ── Load user's registered Fiat Tag on wallet connect ────────────────────
+  useEffect(() => {
+    if (!publicKey) {
+      setUserTagData(null);
+      return;
+    }
+    const walletAddr = publicKey.toBase58();
+    getFiatTagByWallet(walletAddr)
+      .then(tag => {
+        if (tag) {
+          setUserTagData(tag);
+          setTagModalInput(tag.tag_name || '');
+          setTagModalBank(tag.bank_name || 'Choose Bank');
+          setTagModalAcctNumber(tag.account_number || '');
+          setTagModalAcctName(tag.account_name || '');
+        } else {
+          setUserTagData(null);
+        }
+      })
+      .catch(() => setUserTagData(null));
+  }, [publicKey]);
+
+  // ── Real-time resolution of recipient Tag in TAG offramp mode ───────────
+  useEffect(() => {
+    if (offrampSubMode !== 'tag' || !recipientTagInput) {
+      setResolvedTagData(null);
+      setTagLookupError(null);
+      setResolvingTag(false);
+      return;
+    }
+
+    const clean = recipientTagInput.trim();
+    if (clean.length < 2) {
+      setResolvedTagData(null);
+      setTagLookupError(null);
+      setResolvingTag(false);
+      return;
+    }
+
+    setResolvingTag(true);
+    setTagLookupError(null);
+
+    const timer = setTimeout(() => {
+      getFiatTagByName(clean)
+        .then(data => {
+          if (data) {
+            setResolvedTagData(data);
+            setSelectedBank(data.bank_name);
+            setAccountNumber(data.account_number);
+            setAccountName(data.account_name);
+            setTagLookupError(null);
+          } else {
+            setResolvedTagData(null);
+            setSelectedBank('Choose Bank');
+            setAccountNumber('');
+            setAccountName('');
+            if (clean.length >= 3) {
+              setTagLookupError('Tag not found. Please check spelling.');
+            }
+          }
+        })
+        .catch(err => {
+          setResolvedTagData(null);
+          setTagLookupError(err.message || 'Error looking up tag.');
+        })
+        .finally(() => setResolvingTag(false));
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [recipientTagInput, offrampSubMode]);
+
+  // ── Auto-resolve account name in Tag Registration modal ──────────────────
+  useEffect(() => {
+    if (!tagModalAcctNumber || tagModalBank === 'Choose Bank' || !sessionToken || !showTagModal) {
+      return;
+    }
+    const cleanNum = tagModalAcctNumber.replace(/\D/g, '').trim();
+    if (cleanNum.length !== 10) return;
+
+    setTagModalResolving(true);
+    const bankObj = apiBanks.find(b => getBankNameString(b) === tagModalBank);
+    const bankId = bankObj ? (bankObj.id || bankObj.code || bankObj.name) : tagModalBank;
+
+    const timer = setTimeout(() => {
+      resolveBankAccount(sessionToken, bankId, cleanNum)
+        .then(res => {
+          const name = res?.accountName || res?.name || res?.account_name || '';
+          setTagModalAcctName(name || 'No Bank Match');
+        })
+        .catch(() => setTagModalAcctName('No Bank Match'))
+        .finally(() => setTagModalResolving(false));
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [tagModalAcctNumber, tagModalBank, sessionToken, showTagModal, apiBanks]);
+
+  // ── Save user's Fiat Tag to Supabase ─────────────────────────────────────
+  const handleSaveFiatTag = useCallback(async () => {
+    if (!publicKey) {
+      setTagModalError('Please connect your wallet first.');
+      return;
+    }
+    if (!tagModalInput || tagModalInput.trim().length < 3) {
+      setTagModalError('Please enter a valid tag name (minimum 3 characters).');
+      return;
+    }
+    if (tagModalBank === 'Choose Bank') {
+      setTagModalError('Please select a bank.');
+      return;
+    }
+    const cleanAcct = tagModalAcctNumber.replace(/\D/g, '').trim();
+    if (cleanAcct.length !== 10) {
+      setTagModalError('Please enter a valid 10-digit account number.');
+      return;
+    }
+
+    setTagModalSaving(true);
+    setTagModalError(null);
+    try {
+      const bankObj = apiBanks.find(b => getBankNameString(b) === tagModalBank);
+      const bankCode = bankObj ? (bankObj.code || bankObj.id) : null;
+
+      const registered = await registerFiatTag({
+        walletAddress: publicKey.toBase58(),
+        tagName: tagModalInput,
+        bankName: tagModalBank,
+        bankCode,
+        accountNumber: cleanAcct,
+        accountName: tagModalAcctName || 'Account Holder',
+      });
+
+      setUserTagData(registered);
+      setShowTagModal(false);
+    } catch (err) {
+      setTagModalError(err.message || 'Failed to save Fiat Tag.');
+    } finally {
+      setTagModalSaving(false);
+    }
+  }, [publicKey, tagModalInput, tagModalBank, tagModalAcctNumber, tagModalAcctName, apiBanks]);
 
   // ── Routing animation ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -2500,9 +2657,73 @@ export default function P2PPanel({ connected, walletTokenList }) {
         </div>
       )}
 
+      {/* Top Navigation Row with Lime Green TAG Button */}
+      {canTransact && publicKey && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+          <button
+            type="button"
+            onClick={() => {
+              const nextMode = offrampSubMode === 'standard' ? 'tag' : 'standard';
+              setOfframpSubMode(nextMode);
+              if (nextMode === 'tag' && !userTagData) {
+                setShowTagModal(true);
+              }
+            }}
+            style={{
+              background: offrampSubMode === 'tag' ? 'var(--lime)' : 'rgba(163, 230, 53, 0.12)',
+              border: '1px solid rgba(163, 230, 53, 0.4)',
+              color: offrampSubMode === 'tag' ? '#0d1f14' : 'var(--lime)',
+              fontSize: '11px',
+              fontWeight: '800',
+              letterSpacing: '0.06em',
+              padding: '4px 14px',
+              borderRadius: '20px',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+              boxShadow: offrampSubMode === 'tag' ? '0 0 12px rgba(163, 230, 53, 0.4)' : 'none',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            <span>TAG</span>
+            {userTagData && <span style={{ fontSize: '9.5px', opacity: 0.9 }}>({userTagData.tag_name})</span>}
+          </button>
+
+          {offrampSubMode === 'tag' && (
+            <button
+              type="button"
+              onClick={() => {
+                if (userTagData) {
+                  setTagModalInput(userTagData.tag_name || '');
+                  setTagModalBank(userTagData.bank_name || 'Choose Bank');
+                  setTagModalAcctNumber(userTagData.account_number || '');
+                  setTagModalAcctName(userTagData.account_name || '');
+                }
+                setShowTagModal(true);
+              }}
+              style={{
+                background: 'rgba(255, 255, 255, 0.06)',
+                border: '1px solid rgba(255, 255, 255, 0.15)',
+                color: 'white',
+                fontSize: '11px',
+                fontWeight: '600',
+                padding: '4px 12px',
+                borderRadius: '14px',
+                cursor: 'pointer'
+              }}
+            >
+              My Tag
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Title Row with History Icon */}
       <div className="title-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-        <h2 className="card-title" style={{ margin: 0, fontSize: '1.25rem' }}>P2P Trade</h2>
+        <h2 className="card-title" style={{ margin: 0, fontSize: '1.25rem' }}>
+          {offrampSubMode === 'tag' ? 'Fiat Tag P2P' : 'P2P Trade'}
+        </h2>
         {canTransact && publicKey && (
           <button 
             onClick={() => setShowHistoryView(!showHistoryView)}
@@ -2528,7 +2749,10 @@ export default function P2PPanel({ connected, walletTokenList }) {
         )}
       </div>
       <p className="card-sub" style={{ marginBottom: '1.25rem' }}>
-        {mode === 'sell' ? 'Send money to any Bank account.' : 'Receive money from any Bank account.'}
+        {offrampSubMode === 'tag'
+          ? 'Send money directly to any Fiat Tag.'
+          : (mode === 'sell' ? 'Send money to any Bank account.' : 'Receive money from any Bank account.')
+        }
       </p>
 
       {showHistoryView ? (
@@ -2929,210 +3153,264 @@ export default function P2PPanel({ connected, walletTokenList }) {
           </div>
         ) : (
           <>
-            {/* Account Number — shown first */}
-            <div className="field" style={{ position: 'relative', zIndex: (isAcctInputFocused && acctQueryText.length >= 3 && matchingPastAccounts.length > 0) ? 1200 : 2 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                <div className="field-label" style={{ marginBottom: 0 }}>Account Number</div>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button className="p2p-btn-badge" onClick={handlePaste} disabled={!canTransact} style={{ opacity: canTransact ? 1 : 0.6 }}>Paste</button>
-                  <button
-                    className="p2p-btn-badge"
-                    onClick={() => setScannerActive(true)}
-                    disabled={!canTransact}
-                    style={{ opacity: canTransact ? 1 : 0.6, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                    title="Scan QR Code"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <rect x="2" y="2" width="20" height="20" rx="4" stroke="currentColor" strokeWidth="2.5" fill="none" />
-                      <rect x="1" y="10" width="22" height="4" fill="currentColor" />
-                    </svg>
-                  </button>
+            {offrampSubMode === 'tag' ? (
+              /* ── Fiat Tag Input Field (Bank & Account details resolved in background) ── */
+              <div className="field" style={{ position: 'relative', marginBottom: '1.25rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <div className="field-label" style={{ marginBottom: 0 }}>Fiat Tag</div>
+                  {resolvedTagData && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: 'var(--lime)', fontWeight: '700' }}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                      <span>Verified Tag</span>
+                    </div>
+                  )}
                 </div>
-              </div>
 
-              <div style={{ position: 'relative' }}>
-                <div className="input-wrap" style={{ opacity: canTransact ? 1 : 0.6 }}>
+                <div className="input-wrap" style={{ opacity: canTransact ? 1 : 0.6, display: 'flex', alignItems: 'center' }}>
+                  <span style={{ color: 'var(--lime)', fontWeight: '700', fontSize: '15px', marginRight: '4px', userSelect: 'none' }}>$</span>
                   <input
                     type="text"
-                    value={accountNumber}
+                    value={recipientTagInput.replace(/^\$/, '')}
                     onChange={e => {
-                      setAccountNumber(e.target.value);
-                      setIsAcctInputFocused(true);
+                      const val = e.target.value.replace(/[^a-zA-Z0-9_]/g, '');
+                      setRecipientTagInput(val ? `$${val}` : '');
                     }}
-                    onFocus={() => setIsAcctInputFocused(true)}
-                    onBlur={() => setTimeout(() => setIsAcctInputFocused(false), 250)}
-                    placeholder="Enter 10-digit number or search name..."
+                    placeholder="recipientTag"
                     disabled={!canTransact}
+                    style={{ fontSize: '15px', fontWeight: '600', flex: 1 }}
                   />
+                  {resolvingTag && (
+                    <span className="p2p-mini-spinner" style={{ marginLeft: '8px' }} />
+                  )}
                 </div>
 
-                {/* ── Auto-pop matching previous accounts card (>= 3 chars typed) ── */}
-                {isAcctInputFocused && acctQueryText.length >= 3 && matchingPastAccounts.length > 0 && (
-                  <div
-                    className="p2p-account-suggestions"
-                    style={{
-                      position: 'absolute',
-                      top: 'calc(100% + 4px)',
-                      left: 0,
-                      right: 0,
-                      background: '#131822',
-                      border: '1px solid rgba(163, 230, 53, 0.4)',
-                      borderRadius: '14px',
-                      padding: '8px',
-                      zIndex: 1500,
-                      boxShadow: '0 16px 40px rgba(0,0,0,0.95), 0 0 25px rgba(163, 230, 53, 0.2)',
-                      maxHeight: '220px',
-                      overflowY: 'auto',
-                      backdropFilter: 'blur(16px)',
-                    }}
-                  >
-                    <div style={{ padding: '4px 8px 6px 8px', fontSize: '10px', fontWeight: '700', color: 'var(--lime)', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span>Select Saved Account ({matchingPastAccounts.length})</span>
-                      <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)', textTransform: 'none' }}>Tap to choose</span>
+                <div style={{ marginTop: '6px', minHeight: '16px', fontSize: '12px' }}>
+                  {resolvingTag ? (
+                    <span style={{ fontStyle: 'italic', color: 'var(--text3)' }}>
+                      <span className="p2p-mini-spinner" /> Searching Tag...
+                    </span>
+                  ) : resolvedTagData ? (
+                    <span style={{ color: 'var(--lime)', fontWeight: 'bold' }}>
+                      Linked to {resolvedTagData.account_name}
+                    </span>
+                  ) : tagLookupError ? (
+                    <span style={{ color: '#f87171' }}>
+                      {tagLookupError}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+            ) : (
+              /* ── Standard Account Number & Bank Selector ── */
+              <>
+                {/* Account Number — shown first */}
+                <div className="field" style={{ position: 'relative', zIndex: (isAcctInputFocused && acctQueryText.length >= 3 && matchingPastAccounts.length > 0) ? 1200 : 2 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <div className="field-label" style={{ marginBottom: 0 }}>Account Number</div>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button className="p2p-btn-badge" onClick={handlePaste} disabled={!canTransact} style={{ opacity: canTransact ? 1 : 0.6 }}>Paste</button>
+                      <button
+                        className="p2p-btn-badge"
+                        onClick={() => setScannerActive(true)}
+                        disabled={!canTransact}
+                        style={{ opacity: canTransact ? 1 : 0.6, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                        title="Scan QR Code"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <rect x="2" y="2" width="20" height="20" rx="4" stroke="currentColor" strokeWidth="2.5" fill="none" />
+                          <rect x="1" y="10" width="22" height="4" fill="currentColor" />
+                        </svg>
+                      </button>
                     </div>
-                    {matchingPastAccounts.map((acc, idx) => (
+                  </div>
+
+                  <div style={{ position: 'relative' }}>
+                    <div className="input-wrap" style={{ opacity: canTransact ? 1 : 0.6 }}>
+                      <input
+                        type="text"
+                        value={accountNumber}
+                        onChange={e => {
+                          setAccountNumber(e.target.value);
+                          setIsAcctInputFocused(true);
+                        }}
+                        onFocus={() => setIsAcctInputFocused(true)}
+                        onBlur={() => setTimeout(() => setIsAcctInputFocused(false), 250)}
+                        placeholder="Enter 10-digit number or search name..."
+                        disabled={!canTransact}
+                      />
+                    </div>
+
+                    {/* ── Auto-pop matching previous accounts card (>= 3 chars typed) ── */}
+                    {isAcctInputFocused && acctQueryText.length >= 3 && matchingPastAccounts.length > 0 && (
                       <div
-                        key={`${acc.accountNumber}_${idx}`}
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          handleSelectPastAccount(acc);
-                        }}
+                        className="p2p-account-suggestions"
                         style={{
-                          padding: '10px 12px',
-                          borderRadius: '10px',
-                          background: 'rgba(255,255,255,0.05)',
-                          marginBottom: idx < matchingPastAccounts.length - 1 ? '4px' : 0,
-                          cursor: 'pointer',
-                          border: '1px solid rgba(255,255,255,0.08)',
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          transition: 'background 0.15s, border-color 0.15s',
+                          position: 'absolute',
+                          top: 'calc(100% + 4px)',
+                          left: 0,
+                          right: 0,
+                          background: '#131822',
+                          border: '1px solid rgba(163, 230, 53, 0.4)',
+                          borderRadius: '14px',
+                          padding: '8px',
+                          zIndex: 1500,
+                          boxShadow: '0 16px 40px rgba(0,0,0,0.95), 0 0 25px rgba(163, 230, 53, 0.2)',
+                          maxHeight: '220px',
+                          overflowY: 'auto',
+                          backdropFilter: 'blur(16px)',
                         }}
-                        onMouseEnter={e => e.currentTarget.style.background = 'rgba(163, 230, 53, 0.12)'}
-                        onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
                       >
-                        <div>
-                          <div style={{ fontSize: '13px', fontWeight: '700', color: '#ffffff', letterSpacing: '0.04em', fontFamily: 'var(--mono)' }}>
-                            {acc.accountNumber}
-                          </div>
-                          <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginTop: '2px' }}>
-                            {acc.bankName}
-                          </div>
+                        <div style={{ padding: '4px 8px 6px 8px', fontSize: '10px', fontWeight: '700', color: 'var(--lime)', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span>Select Saved Account ({matchingPastAccounts.length})</span>
+                          <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)', textTransform: 'none' }}>Tap to choose</span>
                         </div>
-                        {acc.accountName && (
-                          <div style={{ textAlign: 'right', maxWidth: '140px' }}>
-                            <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--lime)', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {acc.accountName}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div style={{ marginTop: '6px', minHeight: '16px', fontSize: '12px', color: 'var(--lime)', fontWeight: 'bold' }}>
-                {accountNumber && selectedBank !== 'Choose Bank' && (
-                  resolvingName
-                    ? <span style={{ fontStyle: 'italic', color: 'var(--text3)', fontWeight: 'normal' }}><span className="p2p-mini-spinner" /> Resolving...</span>
-                    : accountName && (
-                      <span
-                        className="animated-fade-in"
-                        style={{ color: accountName === 'No Bank Match' ? '#f87171' : 'var(--lime)' }}
-                      >
-                        {accountName}
-                      </span>
-                    )
-                )}
-              </div>
-            </div>
-
-            {/* Bank selector — shown second */}
-            <div className="field" style={{ position: 'relative' }}>
-              <div className="field-label">Bank</div>
-              <div
-                className="input-wrap"
-                onClick={() => { if (canTransact) setBankOpen(!bankOpen); }}
-                style={{ cursor: canTransact ? 'pointer' : 'not-allowed', justifyContent: 'space-between', opacity: canTransact ? 1 : 0.6 }}
-              >
-                {loadingBanks ? (
-                  <span style={{ fontSize: '12px', color: 'var(--text3)', fontStyle: 'italic' }}>
-                    <span className="p2p-mini-spinner" /> Loading banks...
-                  </span>
-                ) : (
-                  <span style={{ color: selectedBank === 'Choose Bank' ? 'var(--text3)' : 'var(--text)' }}>
-                    {selectedBank}
-                  </span>
-                )}
-                <span style={{ color: 'var(--text3)', fontSize: '11px' }}>▼</span>
-              </div>
-
-              {bankOpen && (
-                <div className="drop-menu" style={{ left: 0, right: 0, width: '100%', zIndex: 1000 }} onClick={e => e.stopPropagation()}>
-                  <div style={{ padding: '8px', borderBottom: '1px solid var(--border)' }}>
-                    <input
-                      type="text"
-                      placeholder="Search bank name..."
-                      value={bankSearch}
-                      autoFocus
-                      onChange={e => setBankSearch(e.target.value)}
-                      style={{
-                        width: '100%',
-                        padding: '6px 10px',
-                        background: 'rgba(0,0,0,0.2)',
-                        border: '1px solid var(--border)',
-                        borderRadius: '6px',
-                        color: 'white',
-                        fontSize: '12px',
-                        outline: 'none',
-                      }}
-                    />
-                  </div>
-                  <div ref={bankListScrollRef} style={{ maxHeight: '220px', overflowY: 'auto' }}>
-                    {filteredBanksList.map(b => {
-                      const meta = getBankMetadata(b);
-                      const isSelected = selectedBank === b;
-                      return (
-                        <div
-                          key={b}
-                          className={`drop-item ${isSelected ? 'sel' : ''}`}
-                          onClick={() => { setSelectedBank(b); setBankOpen(false); setBankSearch(''); }}
-                          style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', cursor: 'pointer' }}
-                        >
-                          {meta.logo ? (
-                            <img
-                              src={meta.logo} alt={meta.name}
-                              onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
-                              style={{ width: '22px', height: '22px', borderRadius: '50%', objectFit: 'cover' }}
-                            />
-                          ) : null}
+                        {matchingPastAccounts.map((acc, idx) => (
                           <div
-                            className="bank-avatar"
-                            style={{
-                              display: meta.logo ? 'none' : 'flex',
-                              width: '22px', height: '22px', borderRadius: '50%',
-                              background: meta.color, color: 'white', fontSize: '9px',
-                              fontWeight: 'bold', alignItems: 'center', justifyContent: 'center',
-                              flexShrink: 0,
+                            key={`${acc.accountNumber}_${idx}`}
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              handleSelectPastAccount(acc);
                             }}
+                            style={{
+                              padding: '10px 12px',
+                              borderRadius: '10px',
+                              background: 'rgba(255,255,255,0.05)',
+                              marginBottom: idx < matchingPastAccounts.length - 1 ? '4px' : 0,
+                              cursor: 'pointer',
+                              border: '1px solid rgba(255,255,255,0.08)',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              transition: 'background 0.15s, border-color 0.15s',
+                            }}
+                            onMouseEnter={e => e.currentTarget.style.background = 'rgba(163, 230, 53, 0.12)'}
+                            onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
                           >
-                            {meta.initial}
+                            <div>
+                              <div style={{ fontSize: '13px', fontWeight: '700', color: '#ffffff', letterSpacing: '0.04em', fontFamily: 'var(--mono)' }}>
+                                {acc.accountNumber}
+                              </div>
+                              <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginTop: '2px' }}>
+                                {acc.bankName}
+                              </div>
+                            </div>
+                            {acc.accountName && (
+                              <div style={{ textAlign: 'right', maxWidth: '140px' }}>
+                                <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--lime)', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {acc.accountName}
+                                </span>
+                              </div>
+                            )}
                           </div>
-                          <span className="di-name" style={{ marginLeft: 0 }}>{b}</span>
-                        </div>
-                      );
-                    })}
-                    {filteredBanksList.length === 0 && (
-                      <div style={{ fontSize: '11px', color: 'var(--text3)', fontStyle: 'italic', padding: '12px', textAlign: 'center' }}>
-                        {bankSearch ? `No banks matching "${bankSearch}"` : 'No banks found'}
+                        ))}
                       </div>
                     )}
                   </div>
+
+                  <div style={{ marginTop: '6px', minHeight: '16px', fontSize: '12px', color: 'var(--lime)', fontWeight: 'bold' }}>
+                    {accountNumber && selectedBank !== 'Choose Bank' && (
+                      resolvingName
+                        ? <span style={{ fontStyle: 'italic', color: 'var(--text3)', fontWeight: 'normal' }}><span className="p2p-mini-spinner" /> Resolving...</span>
+                        : accountName && (
+                          <span
+                            className="animated-fade-in"
+                            style={{ color: accountName === 'No Bank Match' ? '#f87171' : 'var(--lime)' }}
+                          >
+                            {accountName}
+                          </span>
+                        )
+                    )}
+                  </div>
                 </div>
-              )}
-            </div>
+
+                {/* Bank selector — shown second */}
+                <div className="field" style={{ position: 'relative' }}>
+                  <div className="field-label">Bank</div>
+                  <div
+                    className="input-wrap"
+                    onClick={() => { if (canTransact) setBankOpen(!bankOpen); }}
+                    style={{ cursor: canTransact ? 'pointer' : 'not-allowed', justifyContent: 'space-between', opacity: canTransact ? 1 : 0.6 }}
+                  >
+                    {loadingBanks ? (
+                      <span style={{ fontSize: '12px', color: 'var(--text3)', fontStyle: 'italic' }}>
+                        <span className="p2p-mini-spinner" /> Loading banks...
+                      </span>
+                    ) : (
+                      <span style={{ color: selectedBank === 'Choose Bank' ? 'var(--text3)' : 'var(--text)' }}>
+                        {selectedBank}
+                      </span>
+                    )}
+                    <span style={{ color: 'var(--text3)', fontSize: '11px' }}>▼</span>
+                  </div>
+
+                  {bankOpen && (
+                    <div className="drop-menu" style={{ left: 0, right: 0, width: '100%', zIndex: 1000 }} onClick={e => e.stopPropagation()}>
+                      <div style={{ padding: '8px', borderBottom: '1px solid var(--border)' }}>
+                        <input
+                          type="text"
+                          placeholder="Search bank name..."
+                          value={bankSearch}
+                          autoFocus
+                          onChange={e => setBankSearch(e.target.value)}
+                          style={{
+                            width: '100%',
+                            padding: '6px 10px',
+                            background: 'rgba(0,0,0,0.2)',
+                            border: '1px solid var(--border)',
+                            borderRadius: '6px',
+                            color: 'white',
+                            fontSize: '12px',
+                            outline: 'none',
+                          }}
+                        />
+                      </div>
+                      <div ref={bankListScrollRef} style={{ maxHeight: '220px', overflowY: 'auto' }}>
+                        {filteredBanksList.map(b => {
+                          const meta = getBankMetadata(b);
+                          const isSelected = selectedBank === b;
+                          return (
+                            <div
+                              key={b}
+                              className={`drop-item ${isSelected ? 'sel' : ''}`}
+                              onClick={() => { setSelectedBank(b); setBankOpen(false); setBankSearch(''); }}
+                              style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', cursor: 'pointer' }}
+                            >
+                              {meta.logo ? (
+                                <img
+                                  src={meta.logo} alt={meta.name}
+                                  onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
+                                  style={{ width: '22px', height: '22px', borderRadius: '50%', objectFit: 'cover' }}
+                                />
+                              ) : null}
+                              <div
+                                className="bank-avatar"
+                                style={{
+                                  display: meta.logo ? 'none' : 'flex',
+                                  width: '22px', height: '22px', borderRadius: '50%',
+                                  background: meta.color, color: 'white', fontSize: '9px',
+                                  fontWeight: 'bold', alignItems: 'center', justifyContent: 'center',
+                                  flexShrink: 0,
+                                }}
+                              >
+                                {meta.initial}
+                              </div>
+                              <span className="di-name" style={{ marginLeft: 0 }}>{b}</span>
+                            </div>
+                          );
+                        })}
+                        {filteredBanksList.length === 0 && (
+                          <div style={{ fontSize: '11px', color: 'var(--text3)', fontStyle: 'italic', padding: '12px', textAlign: 'center' }}>
+                            {bankSearch ? `No banks matching "${bankSearch}"` : 'No banks found'}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
 
             {/* Amount + Token Row */}
             <div style={{ marginBottom: '0.95rem' }}>
@@ -3995,57 +4273,68 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
               {/* Details list */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '28px' }}>
-                {/* Recipient Row */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', fontSize: '13.5px' }}>
-                  <span style={{ color: '#8e9aa8', minWidth: '80px' }}>Recipient</span>
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', color: 'white', fontWeight: '700', textAlign: 'right', maxWidth: '70%', lineHeight: '1.4' }}>
-                    {recipientName}
+                {(successDetails.recipientTag || successDetails.recipient_tag) ? (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13.5px' }}>
+                    <span style={{ color: '#8e9aa8' }}>Recipient Tag</span>
+                    <span style={{ color: 'var(--lime)', fontWeight: '700' }}>
+                      {successDetails.recipientTag || successDetails.recipient_tag}
+                    </span>
                   </div>
-                </div>
-
-                {/* Account Number Row */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13.5px' }}>
-                  <span style={{ color: '#8e9aa8' }}>Account Number</span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'white', fontWeight: '700' }}>
-                    <span>{accountNumber}</span>
-                    {accountNumber !== '—' && (
-                      <svg 
-                        onClick={() => {
-                          navigator.clipboard.writeText(accountNumber);
-                          setCopiedAccount(true);
-                          setTimeout(() => setCopiedAccount(false), 2000);
-                        }}
-                        style={{ cursor: 'pointer', transition: 'color 0.15s', color: copiedAccount ? 'var(--lime)' : '#8e9aa8' }}
-                        width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-                      >
-                        {copiedAccount ? (
-                          <polyline points="20 6 9 17 4 12" />
-                        ) : (
-                          <>
-                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                          </>
-                        )}
-                      </svg>
-                    )}
-                  </div>
-                </div>
-
-                {/* Bank Row */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13.5px' }}>
-                  <span style={{ color: '#8e9aa8' }}>Bank</span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'white', fontWeight: '700', maxWidth: '70%', textAlign: 'right' }}>
-                    {bankMeta && bankMeta.logo ? (
-                      <img src={bankMeta.logo} alt="bank" style={{ width: '18px', height: '18px', borderRadius: '50%', objectFit: 'cover' }} onError={(e) => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'flex'; }} />
-                    ) : null}
-                    {bankMeta ? (
-                      <div style={{ width: '18px', height: '18px', borderRadius: '50%', background: bankMeta.color, color: 'white', display: bankMeta.logo ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '8px', fontWeight: 'bold' }}>
-                        {bankMeta.initial}
+                ) : (
+                  <>
+                    {/* Recipient Row */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', fontSize: '13.5px' }}>
+                      <span style={{ color: '#8e9aa8', minWidth: '80px' }}>Recipient</span>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', color: 'white', fontWeight: '700', textAlign: 'right', maxWidth: '70%', lineHeight: '1.4' }}>
+                        {recipientName}
                       </div>
-                    ) : null}
-                    <span>{bankName}</span>
-                  </div>
-                </div>
+                    </div>
+
+                    {/* Account Number Row */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13.5px' }}>
+                      <span style={{ color: '#8e9aa8' }}>Account Number</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'white', fontWeight: '700' }}>
+                        <span>{accountNumber}</span>
+                        {accountNumber !== '—' && (
+                          <svg 
+                            onClick={() => {
+                              navigator.clipboard.writeText(accountNumber);
+                              setCopiedAccount(true);
+                              setTimeout(() => setCopiedAccount(false), 2000);
+                            }}
+                            style={{ cursor: 'pointer', transition: 'color 0.15s', color: copiedAccount ? 'var(--lime)' : '#8e9aa8' }}
+                            width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                          >
+                            {copiedAccount ? (
+                              <polyline points="20 6 9 17 4 12" />
+                            ) : (
+                              <>
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                              </>
+                            )}
+                          </svg>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Bank Row */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13.5px' }}>
+                      <span style={{ color: '#8e9aa8' }}>Bank</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'white', fontWeight: '700', maxWidth: '70%', textAlign: 'right' }}>
+                        {bankMeta && bankMeta.logo ? (
+                          <img src={bankMeta.logo} alt="bank" style={{ width: '18px', height: '18px', borderRadius: '50%', objectFit: 'cover' }} onError={(e) => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'flex'; }} />
+                        ) : null}
+                        {bankMeta ? (
+                          <div style={{ width: '18px', height: '18px', borderRadius: '50%', background: bankMeta.color, color: 'white', display: bankMeta.logo ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '8px', fontWeight: 'bold' }}>
+                            {bankMeta.initial}
+                          </div>
+                        ) : null}
+                        <span>{bankName}</span>
+                      </div>
+                    </div>
+                  </>
+                )}
 
                 {/* Date Row */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13.5px' }}>
@@ -4216,57 +4505,68 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
               {/* Details list */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '28px' }}>
-                {/* Recipient Row */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', fontSize: '13.5px' }}>
-                  <span style={{ color: '#8e9aa8', minWidth: '80px' }}>Recipient</span>
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', color: 'white', fontWeight: '700', textAlign: 'right', maxWidth: '70%', lineHeight: '1.4' }}>
-                    {recipientName}
+                {(selectedLog.recipient_tag || selectedLog.recipientTag) ? (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13.5px' }}>
+                    <span style={{ color: '#8e9aa8' }}>Recipient Tag</span>
+                    <span style={{ color: 'var(--lime)', fontWeight: '700' }}>
+                      {selectedLog.recipient_tag || selectedLog.recipientTag}
+                    </span>
                   </div>
-                </div>
-
-                {/* Account Number Row */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13.5px' }}>
-                  <span style={{ color: '#8e9aa8' }}>Account Number</span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'white', fontWeight: '700' }}>
-                    <span>{accountNumber}</span>
-                    {accountNumber !== '—' && (
-                      <svg 
-                        onClick={() => {
-                          navigator.clipboard.writeText(accountNumber);
-                          setCopiedAccount(true);
-                          setTimeout(() => setCopiedAccount(false), 2000);
-                        }}
-                        style={{ cursor: 'pointer', transition: 'color 0.15s', color: copiedAccount ? 'var(--lime)' : '#8e9aa8' }}
-                        width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-                      >
-                        {copiedAccount ? (
-                          <polyline points="20 6 9 17 4 12" />
-                        ) : (
-                          <>
-                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                          </>
-                        )}
-                      </svg>
-                    )}
-                  </div>
-                </div>
-
-                {/* Bank Row */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13.5px' }}>
-                  <span style={{ color: '#8e9aa8' }}>Bank</span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'white', fontWeight: '700', maxWidth: '70%', textAlign: 'right' }}>
-                    {bankMeta && bankMeta.logo ? (
-                      <img src={bankMeta.logo} alt="bank" style={{ width: '18px', height: '18px', borderRadius: '50%', objectFit: 'cover' }} onError={(e) => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'flex'; }} />
-                    ) : null}
-                    {bankMeta ? (
-                      <div style={{ width: '18px', height: '18px', borderRadius: '50%', background: bankMeta.color, color: 'white', display: bankMeta.logo ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '8px', fontWeight: 'bold' }}>
-                        {bankMeta.initial}
+                ) : (
+                  <>
+                    {/* Recipient Row */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', fontSize: '13.5px' }}>
+                      <span style={{ color: '#8e9aa8', minWidth: '80px' }}>Recipient</span>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', color: 'white', fontWeight: '700', textAlign: 'right', maxWidth: '70%', lineHeight: '1.4' }}>
+                        {recipientName}
                       </div>
-                    ) : null}
-                    <span>{bankName}</span>
-                  </div>
-                </div>
+                    </div>
+
+                    {/* Account Number Row */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13.5px' }}>
+                      <span style={{ color: '#8e9aa8' }}>Account Number</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'white', fontWeight: '700' }}>
+                        <span>{accountNumber}</span>
+                        {accountNumber !== '—' && (
+                          <svg 
+                            onClick={() => {
+                              navigator.clipboard.writeText(accountNumber);
+                              setCopiedAccount(true);
+                              setTimeout(() => setCopiedAccount(false), 2000);
+                            }}
+                            style={{ cursor: 'pointer', transition: 'color 0.15s', color: copiedAccount ? 'var(--lime)' : '#8e9aa8' }}
+                            width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                          >
+                            {copiedAccount ? (
+                              <polyline points="20 6 9 17 4 12" />
+                            ) : (
+                              <>
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                              </>
+                            )}
+                          </svg>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Bank Row */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13.5px' }}>
+                      <span style={{ color: '#8e9aa8' }}>Bank</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'white', fontWeight: '700', maxWidth: '70%', textAlign: 'right' }}>
+                        {bankMeta && bankMeta.logo ? (
+                          <img src={bankMeta.logo} alt="bank" style={{ width: '18px', height: '18px', borderRadius: '50%', objectFit: 'cover' }} onError={(e) => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'flex'; }} />
+                        ) : null}
+                        {bankMeta ? (
+                          <div style={{ width: '18px', height: '18px', borderRadius: '50%', background: bankMeta.color, color: 'white', display: bankMeta.logo ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '8px', fontWeight: 'bold' }}>
+                            {bankMeta.initial}
+                          </div>
+                        ) : null}
+                        <span>{bankName}</span>
+                      </div>
+                    </div>
+                  </>
+                )}
 
                 {/* Date Row */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13.5px' }}>
@@ -4537,7 +4837,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
               onMouseEnter={e => e.target.style.opacity = '0.85'}
               onMouseLeave={e => e.target.style.opacity = '1'}
             >
-              Done 🎉
+              Done
             </button>
 
             <style>{`
@@ -4545,6 +4845,150 @@ export default function P2PPanel({ connected, walletTokenList }) {
               @keyframes slideUpCard { from { opacity: 0; transform: translateY(40px) scale(0.95) } to { opacity: 1; transform: translateY(0) scale(1) } }
               @keyframes pulseRing { 0%,100% { box-shadow: 0 0 0 0 rgba(132,204,22,0.3) } 50% { box-shadow: 0 0 0 10px rgba(132,204,22,0) } }
             `}</style>
+          </div>
+        </div>
+      )}
+
+      {/* ── Tag Registration / Edit Modal ────────────────────────────────────── */}
+      {showTagModal && (
+        <div
+          className="p2p-success-overlay"
+          onClick={() => setShowTagModal(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 9999,
+            background: 'rgba(0,0,0,0.88)', backdropFilter: 'blur(8px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center'
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: '#131822',
+              border: '1px solid rgba(163, 230, 53, 0.4)',
+              borderRadius: '24px',
+              padding: '28px 24px',
+              width: '92%',
+              maxWidth: '400px',
+              position: 'relative',
+              boxShadow: '0 25px 60px rgba(0,0,0,0.9), 0 0 30px rgba(163,230,53,0.15)',
+              animation: 'slideUpCard 0.3s ease'
+            }}
+          >
+            <button
+              onClick={() => setShowTagModal(false)}
+              style={{
+                position: 'absolute', top: '16px', right: '18px',
+                background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '50%', width: '30px', height: '30px', color: 'white',
+                cursor: 'pointer', fontSize: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center'
+              }}
+            >
+              ✕
+            </button>
+
+            <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+              <h3 style={{ fontSize: '18px', fontWeight: '800', color: 'white', marginBottom: '6px' }}>
+                {userTagData ? 'Edit Your Fiat Tag' : 'Create & Link Fiat Tag'}
+              </h3>
+              <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)', margin: 0, lineHeight: '1.4' }}>
+                Link your bank account to a unique Fiat Tag so others can send you payouts using just your Tag.
+              </p>
+            </div>
+
+            {tagModalError && (
+              <div style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '10px', padding: '10px 12px', fontSize: '11px', color: '#f87171', marginBottom: '14px' }}>
+                {tagModalError}
+              </div>
+            )}
+
+            {/* Tag Name Field */}
+            <div className="field" style={{ marginBottom: '14px' }}>
+              <div className="field-label">Fiat Tag Name</div>
+              <div className="input-wrap" style={{ display: 'flex', alignItems: 'center' }}>
+                <span style={{ color: 'var(--lime)', fontWeight: '700', fontSize: '15px', marginRight: '4px' }}>$</span>
+                <input
+                  type="text"
+                  value={tagModalInput.replace(/^\$/, '')}
+                  onChange={e => {
+                    const val = e.target.value.replace(/[^a-zA-Z0-9_]/g, '');
+                    setTagModalInput(val ? `$${val}` : '');
+                  }}
+                  placeholder="yourtag"
+                  style={{ fontSize: '14px', fontWeight: '600', flex: 1 }}
+                />
+              </div>
+            </div>
+
+            {/* Bank Selector */}
+            <div className="field" style={{ marginBottom: '14px', position: 'relative' }}>
+              <div className="field-label">Bank</div>
+              <div
+                className="input-wrap"
+                onClick={() => setBankOpen(v => !v)}
+                style={{ cursor: 'pointer', justifyContent: 'space-between' }}
+              >
+                <span>{tagModalBank}</span>
+                <span style={{ fontSize: '11px', color: 'var(--text3)' }}>▼</span>
+              </div>
+              {bankOpen && (
+                <div className="drop-menu" style={{ left: 0, right: 0, width: '100%', zIndex: 1000 }} onClick={e => e.stopPropagation()}>
+                  <div style={{ padding: '8px', borderBottom: '1px solid var(--border)' }}>
+                    <input
+                      type="text"
+                      placeholder="Search bank..."
+                      value={bankSearch}
+                      autoFocus
+                      onChange={e => setBankSearch(e.target.value)}
+                      style={{ width: '100%', padding: '6px 10px', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border)', borderRadius: '6px', color: 'white', fontSize: '12px' }}
+                    />
+                  </div>
+                  <div style={{ maxHeight: '180px', overflowY: 'auto' }}>
+                    {filteredBanksList.map(b => (
+                      <div
+                        key={b}
+                        className={`drop-item ${tagModalBank === b ? 'sel' : ''}`}
+                        onClick={() => { setTagModalBank(b); setBankOpen(false); setBankSearch(''); }}
+                        style={{ padding: '8px 12px', cursor: 'pointer', fontSize: '12px' }}
+                      >
+                        {b}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Account Number Field */}
+            <div className="field" style={{ marginBottom: '14px' }}>
+              <div className="field-label">10-Digit Account Number</div>
+              <div className="input-wrap">
+                <input
+                  type="text"
+                  maxLength={10}
+                  value={tagModalAcctNumber}
+                  onChange={e => setTagModalAcctNumber(e.target.value.replace(/\D/g, ''))}
+                  placeholder="0000000000"
+                  style={{ fontSize: '14px', fontWeight: '600' }}
+                />
+              </div>
+              <div style={{ marginTop: '4px', minHeight: '14px', fontSize: '11px', color: 'var(--lime)', fontWeight: 'bold' }}>
+                {tagModalResolving ? (
+                  <span style={{ color: 'var(--text3)', fontStyle: 'italic' }}>Resolving account...</span>
+                ) : tagModalAcctName ? (
+                  <span>{tagModalAcctName}</span>
+                ) : null}
+              </div>
+            </div>
+
+            {/* Action Button */}
+            <button
+              className="send-btn"
+              onClick={handleSaveFiatTag}
+              disabled={tagModalSaving}
+              style={{ marginTop: '10px' }}
+            >
+              {tagModalSaving ? 'Saving Tag...' : (userTagData ? 'Update Fiat Tag' : 'Create Fiat Tag')}
+            </button>
           </div>
         </div>
       )}

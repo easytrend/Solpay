@@ -52,6 +52,7 @@ export async function logP2PTransaction({
   status = 'INIT',
   userEmail,
   depositAddress,
+  recipientTag,
   type = 'p2p_offramp',
 }) {
   if (!supabase || !orderId) return;
@@ -74,6 +75,7 @@ export async function logP2PTransaction({
     status: status || 'INIT',
     user_email: userEmail || null,
     deposit_address: depositAddress || null,
+    recipient_tag: recipientTag || null,
     updated_at: new Date().toISOString(),
   };
 
@@ -327,4 +329,97 @@ export async function getP2PTransactionsByUser(walletAddress) {
     return [];
   }
 }
+
+/**
+ * ── Fiat Tag (P2P Tag) Database API ──────────────────────────────────────────
+ */
+
+/**
+ * Get registered Fiat Tag for a specific wallet address.
+ */
+export async function getFiatTagByWallet(walletAddress) {
+  if (!supabase || !walletAddress) return null;
+  try {
+    const { data, error } = await supabase
+      .from('fiat_tags')
+      .select('*')
+      .eq('wallet_address', walletAddress)
+      .maybeSingle();
+
+    if (error && error.code !== 'PGRST116') {
+      console.warn('[Supabase] getFiatTagByWallet warning:', error.message);
+    }
+    return data || null;
+  } catch (err) {
+    console.warn('[Supabase] getFiatTagByWallet error:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Resolve a Fiat Tag name (e.g. "$johndoe" or "johndoe") to recipient bank details.
+ */
+export async function getFiatTagByName(tagName) {
+  if (!supabase || !tagName) return null;
+  try {
+    const cleanTag = String(tagName).trim().toLowerCase();
+    const formattedTag = cleanTag.startsWith('$') ? cleanTag : `$${cleanTag}`;
+
+    const { data, error } = await supabase
+      .from('fiat_tags')
+      .select('*')
+      .or(`tag_name.eq.${formattedTag},tag_name.eq.${cleanTag}`)
+      .maybeSingle();
+
+    if (error && error.code !== 'PGRST116') {
+      console.warn('[Supabase] getFiatTagByName warning:', error.message);
+    }
+    return data || null;
+  } catch (err) {
+    console.warn('[Supabase] getFiatTagByName error:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Create or update a user's Fiat Tag and linked bank account details.
+ */
+export async function registerFiatTag({ walletAddress, tagName, bankName, bankCode, accountNumber, accountName }) {
+  if (!supabase || !walletAddress || !tagName || !accountNumber || !bankName) {
+    throw new Error('Missing required fields for Fiat Tag registration.');
+  }
+
+  const cleanTag = String(tagName).trim().toLowerCase();
+  const formattedTag = cleanTag.startsWith('$') ? cleanTag : `$${cleanTag}`;
+
+  // 1. Check if tag is already taken by another wallet
+  const existing = await getFiatTagByName(formattedTag);
+  if (existing && existing.wallet_address !== walletAddress) {
+    throw new Error(`Tag ${formattedTag} is already taken by another user. Please choose a different tag.`);
+  }
+
+  const payload = {
+    wallet_address: walletAddress,
+    tag_name: formattedTag,
+    bank_name: bankName,
+    bank_code: bankCode || null,
+    account_number: String(accountNumber).trim(),
+    account_name: String(accountName).trim(),
+    updated_at: new Date().toISOString(),
+  };
+
+  const { data, error } = await supabase
+    .from('fiat_tags')
+    .upsert(payload, { onConflict: 'wallet_address' })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('[Supabase] registerFiatTag error:', error.message);
+    throw new Error(error.message);
+  }
+
+  return data;
+}
+
 
