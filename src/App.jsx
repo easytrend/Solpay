@@ -316,6 +316,8 @@ export default function App() {
   const [showGamesPanel, setShowGamesPanel] = useState(false);
   const [bulkMode, setBulkMode] = useState(false);
   const [activeTab, setActiveTab] = useState('p2p');
+  const [swipeDir, setSwipeDir] = useState(null); // 'left' | 'right' | null
+  const swipeTouchRef = useRef({ startX: 0, startY: 0, active: false });
   const [showModal, setShowModal] = useState(false);
   // walletPubkey string state removed — use `publicKey` from useWallet() directly to
   // avoid exposing a redundant plaintext string that malicious extensions can enumerate via React fiber.
@@ -993,6 +995,36 @@ export default function App() {
     setSending(false);
   }
 
+  // ── Swipe gesture navigation ─────────────────────────────────────────────
+  const TAB_ORDER = ['p2p', 'fiatpay', 'send', 'swap'];
+
+  const handleTouchStart = useCallback((e) => {
+    const t = e.touches[0];
+    swipeTouchRef.current = { startX: t.clientX, startY: t.clientY, active: true };
+  }, []);
+
+  const handleTouchEnd = useCallback((e) => {
+    if (!swipeTouchRef.current.active) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - swipeTouchRef.current.startX;
+    const dy = t.clientY - swipeTouchRef.current.startY;
+    swipeTouchRef.current.active = false;
+    // Require horizontal dominance and minimum 60px distance to avoid accidental triggers
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.4) return;
+    const currentIndex = TAB_ORDER.indexOf(activeTab);
+    if (dx < 0 && currentIndex < TAB_ORDER.length - 1) {
+      // Swipe left -> next tab
+      setSwipeDir('left');
+      setActiveTab(TAB_ORDER[currentIndex + 1]);
+      setTimeout(() => setSwipeDir(null), 320);
+    } else if (dx > 0 && currentIndex > 0) {
+      // Swipe right -> previous tab
+      setSwipeDir('right');
+      setActiveTab(TAB_ORDER[currentIndex - 1]);
+      setTimeout(() => setSwipeDir(null), 320);
+    }
+  }, [activeTab]);
+
   return (
     <div className="page">
       <div className="hex-bg" />
@@ -1053,7 +1085,11 @@ export default function App() {
 
       <FloatClaimWidget liveSolPrice={liveSolPrice} onClaimSuccess={fetchBalances} />
 
-      <div className={`main tab-${activeTab}`}>
+      <div
+        className={`main tab-${activeTab}${swipeDir ? ` swipe-${swipeDir}` : ''}`}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+      >
         <div className="app-card p2p-card">
           <div className="card-body">
             <P2PPanel connected={connected} walletTokenList={walletTokenList} />
@@ -1328,6 +1364,17 @@ export default function App() {
           </svg>
           <span className="bnav-label">Swap</span>
         </button>
+      </div>
+
+      {/* Swipe indicator dots — mobile only */}
+      <div className="swipe-dots">
+        {['p2p', 'fiatpay', 'send', 'swap'].map(tab => (
+          <div
+            key={tab}
+            className={`swipe-dot${activeTab === tab ? ' active' : ''}`}
+            onClick={() => setActiveTab(tab)}
+          />
+        ))}
       </div>
 
       {/* TxODDs Live Games Panel */}

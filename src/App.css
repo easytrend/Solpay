@@ -2069,3 +2069,45 @@ footer a { color:var(--lime); text-decoration:none; }
 .stake-disclaimer { font-size:10px; color:rgba(255,255,255,0.25); text-align:center; line-height:1.5; }
 .stake-spinner { display:inline-block; width:14px; height:14px; border:2px solid rgba(10,22,40,0.3); border-top-color:#0a1628; border-radius:50%; animation:spin 0.7s linear infinite; flex-shrink:0; }
 @keyframes spin { to { transform:rotate(360deg); } }
+
+/* ── Swipe gesture slide animations ────────────────────────────────────── */
+@keyframes slideInFromRight {
+  from { opacity: 0; transform: translateX(48px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes slideInFromLeft {
+  from { opacity: 0; transform: translateX(-48px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.main.swipe-left .app-card {
+  animation: slideInFromRight 0.28s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+}
+.main.swipe-right .app-card {
+  animation: slideInFromLeft 0.28s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+}
+
+/* Swipe indicator dots — mobile only */
+@media (max-width: 700px) {
+  .swipe-dots {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 0 2px;
+    position: relative;
+    z-index: 10;
+  }
+  .swipe-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.2);
+    transition: all 0.25s ease;
+  }
+  .swipe-dot.active {
+    width: 18px;
+    border-radius: 3px;
+    background: var(--lime);
+  }
+}
