@@ -2665,8 +2665,11 @@ export default function P2PPanel({ connected, walletTokenList }) {
             onClick={() => {
               const nextMode = offrampSubMode === 'standard' ? 'tag' : 'standard';
               setOfframpSubMode(nextMode);
-              if (nextMode === 'tag' && !userTagData) {
-                setShowTagModal(true);
+              if (nextMode === 'tag') {
+                setMode('sell');
+                if (!userTagData) {
+                  setShowTagModal(true);
+                }
               }
             }}
             style={{
@@ -2973,18 +2976,20 @@ export default function P2PPanel({ connected, walletTokenList }) {
       {/* Mode switch + Country selector */}
       <div className="p2p-header-row" style={{ marginBottom: '1.25rem' }}>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          <div
-            className="bulk-pill"
-            onClick={() => setMode(mode === 'sell' ? 'buy' : 'sell')}
-            style={{ padding: '6px 12px', cursor: 'pointer' }}
-          >
-            <span className="pill-txt" style={{ fontSize: '11px', fontWeight: 700, color: 'white' }}>
-              {mode === 'sell' ? 'Sell' : 'Buy'}
-            </span>
-            <div className={`tsw ${mode === 'buy' ? 'on' : ''}`} style={{ marginLeft: '6px' }}>
-              <div className="tknob" />
+          {offrampSubMode !== 'tag' && (
+            <div
+              className="bulk-pill"
+              onClick={() => setMode(mode === 'sell' ? 'buy' : 'sell')}
+              style={{ padding: '6px 12px', cursor: 'pointer' }}
+            >
+              <span className="pill-txt" style={{ fontSize: '11px', fontWeight: 700, color: 'white' }}>
+                {mode === 'sell' ? 'Sell' : 'Buy'}
+              </span>
+              <div className={`tsw ${mode === 'buy' ? 'on' : ''}`} style={{ marginLeft: '6px' }}>
+                <div className="tknob" />
+              </div>
             </div>
-          </div>
+          )}
 
         </div>
 
