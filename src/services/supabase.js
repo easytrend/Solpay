@@ -80,20 +80,53 @@ export async function logP2PTransaction({
   };
 
   try {
-    const [{ error: p2pError }, { error: txError }] = await Promise.all([
-      supabase.from('p2p_transactions').upsert(payload, { onConflict: 'signature' }),
-      supabase.from('transactions').upsert(
-        {
-          signature: actualSignature,
-          user_address: userAddress,
-          transaction_type: type,
-          token_symbol: tokenSymbol,
-          token_amount: parseFloat(cryptoAmount) || 0,
-          usd_value: parseFloat(usdValue) || 0,
-        },
-        { onConflict: 'signature' }
-      ),
-    ]);
+    // --- p2p_transactions ---
+    // Check if a record with this order_id already exists; update it, otherwise insert fresh.
+    const { data: existingP2P } = await supabase
+      .from('p2p_transactions')
+      .select('id')
+      .eq('order_id', String(orderId))
+      .maybeSingle();
+
+    let p2pError;
+    if (existingP2P?.id) {
+      ({ error: p2pError } = await supabase
+        .from('p2p_transactions')
+        .update(payload)
+        .eq('order_id', String(orderId)));
+    } else {
+      ({ error: p2pError } = await supabase
+        .from('p2p_transactions')
+        .insert(payload));
+    }
+
+    // --- transactions (secondary ledger table) ---
+    const txPayload = {
+      signature: actualSignature,
+      user_address: userAddress,
+      transaction_type: type,
+      token_symbol: tokenSymbol,
+      token_amount: parseFloat(cryptoAmount) || 0,
+      usd_value: parseFloat(usdValue) || 0,
+    };
+    const { data: existingTx } = await supabase
+      .from('transactions')
+      .select('id')
+      .eq('signature', actualSignature)
+      .maybeSingle();
+
+    let txError;
+    if (existingTx?.id) {
+      ({ error: txError } = await supabase
+        .from('transactions')
+        .update(txPayload)
+        .eq('signature', actualSignature));
+    } else {
+      ({ error: txError } = await supabase
+        .from('transactions')
+        .insert(txPayload));
+    }
+
 
     if (p2pError) console.warn('[Supabase] logP2PTransaction failed:', p2pError.message);
     if (txError) console.warn('[Supabase] logP2PTransaction (transactions) failed:', txError.message);
