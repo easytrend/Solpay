@@ -131,6 +131,9 @@ const getRelativeTime = (isoString) => {
 
 const getCleanNameForLog = (log) => {
   if (!log) return 'Pending Confirmation…';
+  if (log.recipientTag || log.recipient_tag) {
+    return log.recipientTag || log.recipient_tag;
+  }
   let name = '';
   if (log.accountName && typeof log.accountName === 'string') {
     name = log.accountName;
@@ -942,6 +945,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
         bankName: row.bank_name,
         accountNumber: row.account_number,
         accountName: row.account_name,
+        recipientTag: row.recipient_tag,
+        recipient_tag: row.recipient_tag,
         createdAt: row.created_at,
         created_at: row.created_at,
       }));
@@ -970,9 +975,11 @@ export default function P2PPanel({ connected, walletTokenList }) {
             fiatAmount: o.fiatAmount || 0,
             fiatCurrency: 'NGN',
             status: o.status || 'PENDING',
-            bankName: o.bankName,
-            accountNumber: o.accountNumber,
-            accountName: o.accountName,
+            bankName: o.bankName || o.bank,
+            accountNumber: o.accountNumber || o.account,
+            accountName: o.accountName || o.name,
+            recipientTag: o.recipientTag || o.recipient_tag,
+            recipient_tag: o.recipientTag || o.recipient_tag,
             createdAt: o.createdAt || new Date().toISOString(),
           });
         }
@@ -2519,6 +2526,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
         status: 'PENDING',
         userEmail: sessionEmail || undefined,
         depositAddress: order.address,
+        recipientTag: offrampSubMode === 'tag' ? recipientTagInput : undefined,
       });
 
       // 8. Poll for on-chain confirmation
