@@ -1250,6 +1250,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
     }
   }, [accountNumber, cleanAcctDigits, matchingPastAccounts, apiBanks]);
 
+  const hasPromptedTagRef = useRef(false);
+
   // ── Load user's registered Fiat Tag on wallet connect ────────────────────
   useEffect(() => {
     if (!publicKey) {
@@ -1267,10 +1269,15 @@ export default function P2PPanel({ connected, walletTokenList }) {
           setTagModalAcctName(tag.account_name || '');
         } else {
           setUserTagData(null);
+          // Auto-prompt to create tag if they have a verified email but no tag
+          if (sessionToken && !hasPromptedTagRef.current) {
+            setShowTagModal(true);
+            hasPromptedTagRef.current = true;
+          }
         }
       })
       .catch(() => setUserTagData(null));
-  }, [publicKey]);
+  }, [publicKey, sessionToken]);
 
   // ── Real-time resolution of recipient Tag in TAG offramp mode ───────────
   useEffect(() => {
