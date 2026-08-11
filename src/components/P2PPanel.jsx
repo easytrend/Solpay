@@ -1352,6 +1352,10 @@ export default function P2PPanel({ connected, walletTokenList }) {
       setTagModalError('Please connect your wallet first.');
       return;
     }
+    if (!sessionToken) {
+      setTagModalError('Please verify your email first before creating a Fiat Tag.');
+      return;
+    }
     if (!tagModalInput || tagModalInput.trim().length < 3) {
       setTagModalError('Please enter a valid tag name (minimum 3 characters).');
       return;
