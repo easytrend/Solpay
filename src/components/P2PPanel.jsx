@@ -432,6 +432,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const [copiedAccount, setCopiedAccount] = useState(false);
   const [showAmountTooltip, setShowAmountTooltip] = useState(false);
   const [isAcctInputFocused, setIsAcctInputFocused] = useState(false);
+  const [isTagInputFocused, setIsTagInputFocused] = useState(false);
   const [relayerActive, setRelayerActive] = useState(false);
 
   // ── Fiat Tag (P2P Tag) State ─────────────────────────────────────────────
@@ -1190,6 +1191,45 @@ export default function P2PPanel({ connected, walletTokenList }) {
       return matchNum || matchName || matchBank;
     });
   }, [pastAccounts, acctQueryText, cleanAcctDigits]);
+
+  // ── Past Tags for autocomplete in Tag mode ─────────────────────────────────
+  const pastTags = useMemo(() => {
+    const seen = new Set();
+    const list = [];
+    const add = (tag) => {
+      if (!tag || typeof tag !== 'string') return;
+      const clean = tag.trim().toLowerCase();
+      if (!clean || seen.has(clean)) return;
+      seen.add(clean);
+      list.push(tag.trim());
+    };
+    // From payoutLogs
+    if (Array.isArray(payoutLogs)) {
+      payoutLogs.forEach(log => add(log.recipientTag || log.recipient_tag));
+    }
+    // From localStorage order history
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith('paj_user_orders_')) continue;
+        const orders = JSON.parse(localStorage.getItem(k) || '[]');
+        if (Array.isArray(orders)) {
+          orders.forEach(o => add(o.recipient_tag || o.recipientTag));
+        }
+      }
+    } catch {}
+    return list;
+  }, [payoutLogs, publicKey]);
+
+  const tagQueryText = recipientTagInput.replace(/^\$/, '').trim().toLowerCase();
+
+  const matchingPastTags = useMemo(() => {
+    if (tagQueryText.length < 3) return [];
+    return pastTags.filter(tag =>
+      tag.replace(/^\$/, '').toLowerCase().startsWith(tagQueryText) ||
+      tag.replace(/^\$/, '').toLowerCase().includes(tagQueryText)
+    );
+  }, [pastTags, tagQueryText]);
 
   const handleSelectPastAccount = useCallback((acc) => {
     setAccountNumber(acc.accountNumber);
@@ -3181,7 +3221,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
           <>
             {offrampSubMode === 'tag' ? (
               /* ── Fiat Tag Input Field (Bank & Account details resolved in background) ── */
-              <div className="field" style={{ position: 'relative', marginBottom: '1.25rem' }}>
+              <div className="field" style={{ position: 'relative', marginBottom: '1.25rem', zIndex: (isTagInputFocused && tagQueryText.length >= 3 && matchingPastTags.length > 0) ? 1200 : 2 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                   <div className="field-label" style={{ marginBottom: 0 }}>Fiat Tag</div>
                   {resolvedTagData && (
@@ -3202,7 +3242,10 @@ export default function P2PPanel({ connected, walletTokenList }) {
                     onChange={e => {
                       const val = e.target.value.replace(/[^a-zA-Z0-9_]/g, '');
                       setRecipientTagInput(val ? `$${val}` : '');
+                      setIsTagInputFocused(true);
                     }}
+                    onFocus={() => setIsTagInputFocused(true)}
+                    onBlur={() => setTimeout(() => setIsTagInputFocused(false), 250)}
                     placeholder="recipientTag"
                     disabled={!canTransact}
                     style={{ fontSize: '15px', fontWeight: '600', flex: 1 }}
@@ -3212,14 +3255,67 @@ export default function P2PPanel({ connected, walletTokenList }) {
                   )}
                 </div>
 
+                {/* Past Tag autocomplete dropdown */}
+                {isTagInputFocused && tagQueryText.length >= 3 && matchingPastTags.length > 0 && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: 'calc(100% + 4px)',
+                      left: 0,
+                      right: 0,
+                      background: '#131822',
+                      border: '1px solid rgba(163,230,53,0.25)',
+                      borderRadius: '12px',
+                      padding: '8px',
+                      zIndex: 1300,
+                      boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+                    }}
+                  >
+                    <div style={{ padding: '4px 8px 6px 8px', fontSize: '10px', fontWeight: '700', color: 'var(--lime)', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>Recent Tags ({matchingPastTags.length})</span>
+                      <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)', textTransform: 'none' }}>Tap to fill</span>
+                    </div>
+                    {matchingPastTags.map((tag, idx) => (
+                      <div
+                        key={tag}
+                        onMouseDown={e => {
+                          e.preventDefault();
+                          setRecipientTagInput(tag.startsWith('$') ? tag : `$${tag}`);
+                          setIsTagInputFocused(false);
+                        }}
+                        style={{
+                          padding: '10px 12px',
+                          borderRadius: '10px',
+                          background: 'rgba(255,255,255,0.05)',
+                          marginBottom: idx < matchingPastTags.length - 1 ? '4px' : 0,
+                          cursor: 'pointer',
+                          border: '1px solid rgba(255,255,255,0.08)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          transition: 'background 0.15s, border-color 0.15s',
+                        }}
+                        onMouseEnter={e => {
+                          e.currentTarget.style.background = 'rgba(163,230,53,0.12)';
+                          e.currentTarget.style.borderColor = 'rgba(163,230,53,0.3)';
+                        }}
+                        onMouseLeave={e => {
+                          e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
+                          e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
+                        }}
+                      >
+                        <span style={{ color: 'var(--lime)', fontWeight: '700', fontSize: '14px' }}>
+                          {tag.startsWith('$') ? tag : `$${tag}`}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 <div style={{ marginTop: '6px', minHeight: '16px', fontSize: '12px' }}>
                   {resolvingTag ? (
                     <span style={{ fontStyle: 'italic', color: 'var(--text3)' }}>
                       <span className="p2p-mini-spinner" /> Searching Tag...
-                    </span>
-                  ) : resolvedTagData ? (
-                    <span style={{ color: 'var(--lime)', fontWeight: 'bold' }}>
-                      Linked to {resolvedTagData.account_name}
                     </span>
                   ) : tagLookupError ? (
                     <span style={{ color: '#f87171' }}>
