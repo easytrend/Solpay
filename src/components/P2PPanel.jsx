@@ -1768,13 +1768,15 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const baseCryptoAmount = estCryptoAmount + platformFeeInToken;
   const fiatAmountText = parsedAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  // ── Validation: Onramp minimum $1.00 USD worth of crypto ───────────────────
+  // ── Validation: Onramp minimum $1.00 USD / maximum $2,000.00 USD worth of crypto ─
   const ONRAMP_MIN_USD = 1.00;
+  const ONRAMP_MAX_USD = 2000.00;
   // estOnrampCrypto is defined later; we use grossOnrampCrypto here for early check
   const onrampGrossValueUsd = (onrampInputMode === 'fiat'
     ? (onrampNgnRate > 0 ? (parseFloat(onrampAmount) || 0) / onrampNgnRate : 0)
     : (parseFloat(onrampAmount) || 0)) * tokenPriceUsd;
   const onrampBelowMinimum = (parseFloat(onrampAmount) || 0) > 0 && onrampGrossValueUsd < ONRAMP_MIN_USD;
+  const onrampExceedsMaximum = (parseFloat(onrampAmount) || 0) > 0 && onrampGrossValueUsd > ONRAMP_MAX_USD;
 
   const parsedOnrampAmtRaw = parseFloat(onrampAmount) || 0;
   const parsedOnrampAmt = onrampInputMode === 'crypto' ? parsedOnrampAmtRaw * onrampNgnRate : parsedOnrampAmtRaw;
@@ -1838,10 +1840,12 @@ export default function P2PPanel({ connected, walletTokenList }) {
   );
   const displayBank = selectedBank === 'Choose Bank' ? (allBankNames[0] || 'Choose Bank') : selectedBank;
 
-  // ── Validation: Offramp minimum $0.60 USD in crypto ──────────────────────
+  // ── Validation: Offramp minimum $0.60 USD / maximum $5,000.00 USD in crypto ──
   const OFFRAMP_MIN_USD = 0.60;
+  const OFFRAMP_MAX_USD = 5000.00;
   const offrampCryptoValueUsd = baseCryptoAmount * tokenPriceUsd;
   const offrampBelowMinimum = parsedAmt > 0 && offrampCryptoValueUsd < OFFRAMP_MIN_USD;
+  const offrampExceedsMaximum = parsedAmt > 0 && offrampCryptoValueUsd > OFFRAMP_MAX_USD;
 
   // ── Validation: Offramp insufficient balance ────────────────────────────────
   const walletBalance = liveSelectedToken.balance || 0;
@@ -1853,6 +1857,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
     !apiError &&
     parsedAmt > 0 &&
     !offrampBelowMinimum &&
+    !offrampExceedsMaximum &&
     !offrampExceedsBalance &&
     !!accountNumber &&
     accountNumber.trim().length >= 8 &&
@@ -3776,11 +3781,14 @@ export default function P2PPanel({ connected, walletTokenList }) {
                 </div>
               </div>
 
-              {/* Exchange rate */}
+              {/* Exchange rate + Limit */}
               {pajRates?.offRampRate?.rate && (
-                <div style={{ marginTop: '6px', fontSize: '11px' }}>
+                <div style={{ marginTop: '6px', fontSize: '11px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span style={{ color: 'rgba(255,255,255,0.38)' }}>
                     1 {liveSelectedToken.symbol} = {selectedCountry.symbol}{ngnRate.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </span>
+                  <span style={{ color: 'rgba(255,255,255,0.38)', fontWeight: '500' }}>
+                    Limit: $0.6 - $5,000
                   </span>
                 </div>
               )}
@@ -3816,6 +3824,21 @@ export default function P2PPanel({ connected, walletTokenList }) {
                 lineHeight: '1.4'
               }}>
                 ✕ Minimum offramp is $0.60 worth of {liveSelectedToken.symbol}. Please increase your amount.
+              </div>
+            )}
+            {parsedAmt > 0 && offrampExceedsMaximum && (
+              <div style={{
+                background: 'rgba(239, 68, 68, 0.08)',
+                border: '1px solid rgba(239, 68, 68, 0.2)',
+                borderRadius: '8px',
+                padding: '10px 12px',
+                fontSize: '11px',
+                color: '#f87171',
+                marginBottom: '12px',
+                textAlign: 'left',
+                lineHeight: '1.4'
+              }}>
+                ✕ Maximum offramp limit is $5,000.00 worth of {liveSelectedToken.symbol}. Please decrease your amount.
               </div>
             )}
             {parsedAmt > 0 && offrampExceedsBalance && !offrampBelowMinimum && (
@@ -4043,11 +4066,14 @@ export default function P2PPanel({ connected, walletTokenList }) {
               </div>
             </div>
 
-            {/* Exchange rate + service fee — shown below Amount input block */}
+            {/* Exchange rate + Limit — shown below Amount input block */}
             {pajRates?.onRampRate?.rate && (
-              <div style={{ marginTop: '6px', fontSize: '11px' }}>
+              <div style={{ marginTop: '6px', fontSize: '11px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ color: 'rgba(255,255,255,0.38)' }}>
                   1 {liveSelectedToken.symbol} ≈ {selectedCountry.symbol}{displayOnrampRate.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+                <span style={{ color: 'rgba(255,255,255,0.38)', fontWeight: '500' }}>
+                  Limit: $1 - $2,000
                 </span>
               </div>
             )}
@@ -4259,7 +4285,22 @@ export default function P2PPanel({ connected, walletTokenList }) {
               textAlign: 'left',
               lineHeight: '1.4'
             }}>
-              ✕ Minimum buy is $1.00 worth of {liveSelectedToken.symbol}. Please increase your amount.
+              ✕ Minimum buy limit is $1.00 worth of {liveSelectedToken.symbol}. Please increase your amount.
+            </div>
+          )}
+          {(parseFloat(onrampAmount) || 0) > 0 && onrampExceedsMaximum && (
+            <div style={{
+              background: 'rgba(239, 68, 68, 0.08)',
+              border: '1px solid rgba(239, 68, 68, 0.2)',
+              borderRadius: '8px',
+              padding: '10px 12px',
+              fontSize: '11px',
+              color: '#f87171',
+              marginBottom: '12px',
+              textAlign: 'left',
+              lineHeight: '1.4'
+            }}>
+              ✕ Maximum buy limit is $2,000.00 worth of {liveSelectedToken.symbol}. Please decrease your amount.
             </div>
           )}
 
@@ -4268,8 +4309,8 @@ export default function P2PPanel({ connected, walletTokenList }) {
             <button
               className="send-btn"
               onClick={handleOnrampSubmit}
-              disabled={onrampLoading || !parsedOnrampAmt || parsedOnrampAmt <= 0 || !sessionToken || onrampBelowMinimum}
-              style={{ opacity: (onrampLoading || !parsedOnrampAmt || !sessionToken || onrampBelowMinimum) ? 0.6 : 1, cursor: (onrampLoading || !parsedOnrampAmt || !sessionToken || onrampBelowMinimum) ? 'not-allowed' : 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', padding: '13px 16px' }}
+              disabled={onrampLoading || !parsedOnrampAmt || parsedOnrampAmt <= 0 || !sessionToken || onrampBelowMinimum || onrampExceedsMaximum}
+              style={{ opacity: (onrampLoading || !parsedOnrampAmt || !sessionToken || onrampBelowMinimum || onrampExceedsMaximum) ? 0.6 : 1, cursor: (onrampLoading || !parsedOnrampAmt || !sessionToken || onrampBelowMinimum || onrampExceedsMaximum) ? 'not-allowed' : 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', padding: '13px 16px' }}
             >
               {onrampLoading ? (
                 <>
