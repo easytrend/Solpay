@@ -2924,7 +2924,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
       {showHistoryView ? (
         <div className="p2p-history-view" style={{ animation: 'fadeIn 0.2s ease-in-out' }}>
-          <div style={{ display: 'flex', alignItems: 'center', marginBottom: '1.25rem', gap: '10px' }}>
+          <div style={{ marginBottom: '1.25rem' }}>
             <button 
               onClick={() => setShowHistoryView(false)}
               style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)', borderRadius: '8px', color: 'white', cursor: 'pointer', padding: '6px 10px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px' }}
@@ -2932,7 +2932,6 @@ export default function P2PPanel({ connected, walletTokenList }) {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
               Back
             </button>
-            <h3 style={{ fontSize: '14px', margin: 0, color: 'white' }}>Transaction History</h3>
           </div>
           {loadingLogs ? (
               <div style={{ fontSize: '12px', color: 'var(--text3)', fontStyle: 'italic', textAlign: 'center', padding: '24px' }}>
