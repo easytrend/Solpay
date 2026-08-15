@@ -13,8 +13,6 @@ import {
   Connection,
   Transaction,
   Keypair,
-  clusterApiUrl,
-  PublicKey,
 } from '@solana/web3.js';
 
 // ── Programs that could drain the relayer's SOL/tokens if misused ────────────
