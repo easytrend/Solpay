@@ -2886,13 +2886,13 @@ export default function P2PPanel({ connected, walletTokenList }) {
         {offrampSubMode === 'tag' ? (
           renderCountrySelector()
         ) : (
-          canTransact && publicKey && (
+          canTransact && publicKey && !showHistoryView && (
             <button 
-              onClick={() => setShowHistoryView(!showHistoryView)}
+              onClick={() => setShowHistoryView(true)}
               style={{ 
-                background: showHistoryView ? 'rgba(255,255,255,0.1)' : 'none', 
+                background: 'none', 
                 border: 'none', 
-                color: showHistoryView ? 'white' : 'rgba(255,255,255,0.6)', 
+                color: 'rgba(255,255,255,0.6)', 
                 cursor: 'pointer', 
                 padding: '6px',
                 borderRadius: '50%',
