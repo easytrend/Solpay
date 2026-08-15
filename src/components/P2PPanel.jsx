@@ -370,7 +370,7 @@ function verifyOfframpTransaction(transaction, expectedRecipient, expectedToken,
 // Component
 // ---------------------------------------------------------------------------
 
-export default function P2PPanel({ connected, walletTokenList }) {
+export default function P2PPanel({ connected, walletTokenList, onRefreshBalances }) {
   const { connection } = useConnection();
   const { publicKey, sendTransaction, signTransaction } = useWallet();
 
@@ -2274,6 +2274,11 @@ export default function P2PPanel({ connected, walletTokenList }) {
         setShowOnrampSuccess(true);
         setOnrampStatus('completed');
       }
+
+      // Fast balance refresh on onramp completion
+      onRefreshBalances?.();
+      setTimeout(() => onRefreshBalances?.(), 1500);
+      setTimeout(() => onRefreshBalances?.(), 3500);
     } catch (err) {
       console.error('handleOrderCompleted failed:', err);
       const msg = err.message || String(err);
@@ -2703,6 +2708,11 @@ export default function P2PPanel({ connected, walletTokenList }) {
         recipientTag: offrampSubMode === 'tag' ? recipientTagInput : undefined
       });
       setShowSuccess(true);
+
+      // Fast balance refresh immediately after offramp/tag transaction confirms
+      onRefreshBalances?.();
+      setTimeout(() => onRefreshBalances?.(), 1500);
+      setTimeout(() => onRefreshBalances?.(), 3500);
 
       // Clear form fields in the UI
       setAmount('');
@@ -4644,6 +4654,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
                 onClick={() => {
                   setShowSuccess(false);
                   setSuccessDetails(null);
+                  onRefreshBalances?.();
                   if (offrampSocketRef.current) {
                     try { offrampSocketRef.current.disconnect(); } catch { /* ignore */ }
                     offrampSocketRef.current = null;
@@ -5075,7 +5086,10 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
             {/* Done button */}
             <button
-              onClick={() => setShowOnrampSuccess(false)}
+              onClick={() => {
+                setShowOnrampSuccess(false);
+                onRefreshBalances?.();
+              }}
               style={{
                 width: '100%', padding: '13px',
                 background: 'linear-gradient(135deg, #65a30d, #84cc16)',

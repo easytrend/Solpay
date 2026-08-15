@@ -510,27 +510,17 @@ export default function App() {
     setWalletLoading(true);
     setWalletError(null);
     try {
-      // SOL balance
-      const lamports = await connection.getBalance(publicKey, 'confirmed');
-      setSolBalance(lamports / 1e9);
+      // 1. Fetch SOL balance and Token accounts in PARALLEL directly from RPC
+      const [lamports, resp1, resp2] = await Promise.all([
+        connection.getBalance(publicKey, 'confirmed'),
+        connection.getParsedTokenAccountsByOwner(publicKey, { programId: TOKEN_PROGRAM_ID }),
+        connection.getParsedTokenAccountsByOwner(publicKey, { programId: TOKEN_2022_PROGRAM_ID }).catch(() => ({ value: [] })),
+      ]);
 
-      // Use ONLY the wallet-adapter connection for ALL token fetches.
-      // Hardcoded fallback RPC arrays removed — they bypass wallet security, expose public keys
-      // to unauthenticated third-party endpoints, and can return falsified balances.
-      let results = [];
-      try {
-        const [resp1, resp2] = await Promise.all([
-          connection.getParsedTokenAccountsByOwner(publicKey, { programId: TOKEN_PROGRAM_ID }),
-          connection.getParsedTokenAccountsByOwner(publicKey, { programId: TOKEN_2022_PROGRAM_ID }).catch(() => ({ value: [] })),
-        ]);
-        results = [...(resp1.value || []), ...(resp2.value || [])];
-        
-      } catch (primaryErr) {
-        console.warn(`❌ Token fetch failed on wallet-adapter connection:`, primaryErr.message);
-        // Do not fall back to hardcoded RPCs — surface the error to the user instead.
-        throw primaryErr;
-      }
+      const solAmount = lamports / 1e9;
+      setSolBalance(solAmount);
 
+      const results = [...(resp1.value || []), ...(resp2.value || [])];
       const mintMap = {};
       results.forEach(account => {
         const parsed = account.account.data.parsed.info;
@@ -540,66 +530,136 @@ export default function App() {
       });
 
       const allMints = Object.keys(mintMap);
-      
-      // 2. Fetch live prices from Jupiter price API (api.jup.ag, different from tokens.jup.ag)
-      let jupPrices = {};
-      let jupTokensMap = {};
-      if (allMints.length > 0) {
-        try {
-          const [priceResp, tokensResp] = await Promise.all([
-            fetch(`https://api.jup.ag/price/v2?ids=${allMints.join(',')}`),
-            fetch('https://tokens.jup.ag/tokens?tags=verified').catch(() => ({ json: () => [] }))
-          ]);
-          const priceData = await priceResp.json();
-          jupPrices = priceData.data || {};
-          
-          if (tokensResp.ok || tokensResp.json) {
-            const tokensData = await tokensResp.json();
-            if (Array.isArray(tokensData)) {
-              tokensData.forEach(t => jupTokensMap[t.address] = t);
-            }
-          }
-        } catch (e) {
-          
-        }
-      }
 
-      // 3. Construct the full portfolio list using KNOWN_MINTS and Jupiter for metadata
-      const toks = allMints.map(mint => {
+      // 2. Immediately build portfolio tokens from static KNOWN_MINTS + TOKENS (fast 0ms UI update)
+      const initialToks = allMints.map(mint => {
         const balance = mintMap[mint];
-        const priceInfo = jupPrices[mint] || {};
         const staticMeta = KNOWN_MINTS[mint] || {};
-        const jupMeta = jupTokensMap[mint] || {};
-
-        // Sanitize token logo URIs through isTrustedImageOrigin
-        const candidateLogoURI = jupMeta.logoURI || staticMeta.logoURI || `https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/${mint}/logo.png`;
+        const fallbackTok = TOKENS.find(t => t.symbol === staticMeta.symbol) || {};
+        const candidateLogoURI = staticMeta.logoURI || `https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/${mint}/logo.png`;
 
         return {
           mint,
           uiAmount: balance,
-          symbol:   jupMeta.symbol || staticMeta.symbol  || mint.slice(0, 6),
-          name:     jupMeta.name   || staticMeta.name    || 'Unknown Token',
-          price:    parseFloat(priceInfo.price || staticMeta.price || 0),
-          color:    staticMeta.color   || '#aaa',
-          bg:       staticMeta.bg      || 'rgba(255,255,255,0.08)',
+          symbol:   staticMeta.symbol || mint.slice(0, 6),
+          name:     staticMeta.name   || fallbackTok.name || 'Unknown Token',
+          price:    parseFloat(staticMeta.price || fallbackTok.price || 0),
+          color:    staticMeta.color  || '#aaa',
+          bg:       staticMeta.bg     || 'rgba(255,255,255,0.08)',
           logoURI:  isTrustedImageOrigin(candidateLogoURI) ? candidateLogoURI : null,
         };
       });
 
-      // Sort by USD value
-      toks.sort((a, b) => (b.uiAmount * b.price) - (a.uiAmount * a.price));
+      initialToks.sort((a, b) => (b.uiAmount * b.price) - (a.uiAmount * a.price));
 
-      setSplTokens(toks);
+      // Update state IMMEDIATELY (no waiting for external APIs)
+      setSplTokens(initialToks);
+      setWalletLoading(false);
+
+      // Cache for instant next load
+      const walletKey = publicKey.toBase58();
+      try {
+        localStorage.setItem(`fiat_cached_balance_${walletKey}`, JSON.stringify({
+          sol: solAmount,
+          spl: initialToks,
+          ts: Date.now()
+        }));
+      } catch {}
+
+      // 3. Asynchronously fetch live prices from Jupiter in background (non-blocking)
+      if (allMints.length > 0) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+        fetch(`https://api.jup.ag/price/v2?ids=${allMints.join(',')}`, { signal: controller.signal })
+          .then(r => r.json())
+          .then(priceData => {
+            clearTimeout(timeoutId);
+            const jupPrices = priceData.data || {};
+            setSplTokens(prevToks => {
+              const updated = prevToks.map(t => {
+                const p = jupPrices[t.mint]?.price;
+                return p ? { ...t, price: parseFloat(p) } : t;
+              });
+              updated.sort((a, b) => (b.uiAmount * b.price) - (a.uiAmount * a.price));
+              try {
+                localStorage.setItem(`fiat_cached_balance_${walletKey}`, JSON.stringify({
+                  sol: solAmount,
+                  spl: updated,
+                  ts: Date.now()
+                }));
+              } catch {}
+              return updated;
+            });
+          })
+          .catch(() => {
+            clearTimeout(timeoutId);
+          });
+      }
     } catch (e) {
+      console.warn('fetchBalances error:', e);
       setWalletError(e.message || 'Failed to fetch balances');
+      setWalletLoading(false);
     }
-    setWalletLoading(false);
   }, [connection, publicKey, connected]);
 
-  // Auto-fetch when wallet connects or changes
+  // Auto-fetch when wallet connects or changes, with instant cache hydration and live WebSocket listener
   useEffect(() => {
     if (connected && publicKey) {
+      const pubkeyStr = publicKey.toBase58();
+      // 1. Instant hydration from cache (0ms UI render)
+      try {
+        const cachedRaw = localStorage.getItem(`fiat_cached_balance_${pubkeyStr}`);
+        if (cachedRaw) {
+          const cached = JSON.parse(cachedRaw);
+          if (typeof cached.sol === 'number') setSolBalance(cached.sol);
+          if (Array.isArray(cached.spl) && cached.spl.length > 0) setSplTokens(cached.spl);
+        }
+      } catch {}
+
+      // 2. Fetch fresh on-chain balances
       fetchBalances();
+
+      // 3. Real-time on-chain WebSocket listener for SOL balance changes
+      let subId = null;
+      try {
+        subId = connection.onAccountChange(
+          publicKey,
+          (accountInfo) => {
+            const newSol = accountInfo.lamports / 1e9;
+            setSolBalance(newSol);
+            fetchBalances();
+          },
+          'confirmed'
+        );
+      } catch (err) {
+        console.warn('WebSocket account subscription error:', err);
+      }
+
+      // 4. Fast re-fetch on window focus / tab visibility
+      const handleFocus = () => {
+        if (document.visibilityState === 'visible') {
+          fetchBalances();
+        }
+      };
+      window.addEventListener('focus', handleFocus);
+      document.addEventListener('visibilitychange', handleFocus);
+
+      // 5. Periodic background refresh
+      const interval = setInterval(() => {
+        if (document.visibilityState === 'visible') {
+          fetchBalances();
+        }
+      }, 15000);
+
+      return () => {
+        if (subId !== null) {
+          try { connection.removeAccountChangeListener(subId); } catch {}
+        }
+        window.removeEventListener('focus', handleFocus);
+        document.removeEventListener('visibilitychange', handleFocus);
+        clearInterval(interval);
+      };
     } else {
       setSolBalance(null);
       setSplTokens([]);
@@ -609,7 +669,7 @@ export default function App() {
       setRecipient('');
       setAmount('');
     }
-  }, [connected]);
+  }, [connected, publicKey, connection, fetchBalances]);
 
   // Auto-dismiss walletError after 10 seconds
   useEffect(() => {
@@ -1086,7 +1146,7 @@ export default function App() {
       >
         <div className="app-card p2p-card">
           <div className="card-body">
-            <P2PPanel connected={connected} walletTokenList={walletTokenList} />
+            <P2PPanel connected={connected} walletTokenList={walletTokenList} onRefreshBalances={fetchBalances} />
           </div>
         </div>
 
