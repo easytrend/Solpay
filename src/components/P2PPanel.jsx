@@ -2813,7 +2813,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
       )}
 
       {/* Top Navigation Row with Lime Green TAG Button */}
-      {canTransact && publicKey && (
+      {canTransact && publicKey && !showHistoryView && (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
           <button
             type="button"
