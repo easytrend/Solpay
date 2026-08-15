@@ -497,6 +497,20 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const swapTriggeredRef = useRef(false); // guard: prevent double auto-swap trigger
   const [copiedOnrampAcct, setCopiedOnrampAcct] = useState(false);
   const [showOnrampTooltip, setShowOnrampTooltip] = useState(false);
+  const amountTooltipRef = useRef(null);
+
+  useEffect(() => {
+    if (!showAmountTooltip) return;
+    const handleOutsideClick = (e) => {
+      if (amountTooltipRef.current && !amountTooltipRef.current.contains(e.target)) {
+        setShowAmountTooltip(false);
+      }
+    };
+    document.addEventListener('pointerdown', handleOutsideClick);
+    return () => {
+      document.removeEventListener('pointerdown', handleOutsideClick);
+    };
+  }, [showAmountTooltip]);
   // True net USDC from PajCash (after their fees) — fetched live via getOnrampValue().
   // null = not yet fetched / fetching in progress.
   const [pajcashNetUsdc, setPajcashNetUsdc] = useState(null);
@@ -3547,6 +3561,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
                 </div>
                 {/* Clickable fee tooltip */}
                 <div
+                  ref={amountTooltipRef}
                   style={{ position: 'relative', display: 'inline-flex', cursor: 'pointer' }}
                   onClick={() => setShowAmountTooltip(v => !v)}
                 >
