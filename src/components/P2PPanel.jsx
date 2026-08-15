@@ -2881,7 +2881,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
       {/* Title Row with History Icon (or Country selector on TAG page) */}
       <div className="title-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px', position: 'relative', zIndex: 10 }}>
         <h2 className="card-title" style={{ margin: 0, fontSize: '1.25rem' }}>
-          {offrampSubMode === 'tag' ? 'Fiat Tag' : 'P2P Trade'}
+          {showHistoryView ? 'Transaction History' : offrampSubMode === 'tag' ? 'Fiat Tag' : 'P2P Trade'}
         </h2>
         {offrampSubMode === 'tag' ? (
           renderCountrySelector()
@@ -2894,29 +2894,33 @@ export default function P2PPanel({ connected, walletTokenList }) {
                 border: 'none', 
                 color: 'rgba(255,255,255,0.6)', 
                 cursor: 'pointer', 
-                padding: '6px',
-                borderRadius: '50%',
+                padding: '4px 6px',
+                borderRadius: '8px',
                 transition: 'all 0.2s',
                 display: 'flex',
+                flexDirection: 'column',
                 alignItems: 'center',
-                justifyContent: 'center'
+                gap: '2px'
               }}
               title="Transaction History"
             >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="10"></circle>
                 <polyline points="12 6 12 12 16 14"></polyline>
               </svg>
+              <span style={{ fontSize: '9px', fontWeight: '600', letterSpacing: '0.04em', lineHeight: 1 }}>History</span>
             </button>
           )
         )}
       </div>
-      <p className="card-sub" style={{ marginBottom: '1.25rem' }}>
-        {offrampSubMode === 'tag'
-          ? 'Send money directly to any Fiat Tag.'
-          : (mode === 'sell' ? 'Send money to any Bank account.' : 'Receive money from any Bank account.')
-        }
-      </p>
+      {!showHistoryView && (
+        <p className="card-sub" style={{ marginBottom: '1.25rem' }}>
+          {offrampSubMode === 'tag'
+            ? 'Send money directly to any Fiat Tag.'
+            : (mode === 'sell' ? 'Send money to any Bank account.' : 'Receive money from any Bank account.')
+          }
+        </p>
+      )}
 
       {showHistoryView ? (
         <div className="p2p-history-view" style={{ animation: 'fadeIn 0.2s ease-in-out' }}>
