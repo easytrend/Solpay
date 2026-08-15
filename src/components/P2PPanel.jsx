@@ -511,6 +511,21 @@ export default function P2PPanel({ connected, walletTokenList }) {
       document.removeEventListener('pointerdown', handleOutsideClick);
     };
   }, [showAmountTooltip]);
+
+  const countryPickerRef = useRef(null);
+
+  useEffect(() => {
+    if (!countryOpen) return;
+    const handleOutsideClick = (e) => {
+      if (countryPickerRef.current && !countryPickerRef.current.contains(e.target)) {
+        setCountryOpen(false);
+      }
+    };
+    document.addEventListener('pointerdown', handleOutsideClick);
+    return () => {
+      document.removeEventListener('pointerdown', handleOutsideClick);
+    };
+  }, [countryOpen]);
   // True net USDC from PajCash (after their fees) — fetched live via getOnrampValue().
   // null = not yet fetched / fetching in progress.
   const [pajcashNetUsdc, setPajcashNetUsdc] = useState(null);
@@ -2722,6 +2737,66 @@ export default function P2PPanel({ connected, walletTokenList }) {
     );
   }
 
+  const renderCountrySelector = () => (
+    <div ref={countryPickerRef} className="p2p-country-selector" style={{ position: 'relative' }}>
+      <div className="curr-selector" onClick={() => setCountryOpen(!countryOpen)}>
+        <span className="curr-flag">{selectedCountry.flag}</span>
+        <span style={{ marginLeft: '4px' }}>{selectedCountry.code}</span>
+        <span className="curr-chevron" style={{ marginLeft: '6px' }}>▼</span>
+      </div>
+      {countryOpen && (
+        <div className="drop-menu" style={{ right: 0, zIndex: 100, minWidth: '220px' }}>
+          <div style={{ padding: '8px', borderBottom: '1px solid var(--border)' }} onClick={e => e.stopPropagation()}>
+            <input
+              type="text"
+              placeholder="Search country..."
+              value={countrySearch}
+              onChange={e => setCountrySearch(e.target.value)}
+              style={{ width: '100%', padding: '6px 10px', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border)', borderRadius: '6px', color: 'white', fontSize: '12px', outline: 'none' }}
+            />
+          </div>
+          <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+            {filteredCountries.map(c => {
+              const isLiveCountry = LIVE_COUNTRY_CODES.has(c.code);
+              return (
+                <div
+                  key={c.code}
+                  className={`drop-item ${selectedCountry.code === c.code ? 'sel' : ''} ${!isLiveCountry ? 'country-coming-soon' : ''}`}
+                  onClick={() => {
+                    if (!isLiveCountry) return; // block non-Nigeria selection
+                    setSelectedCountry(c);
+                    setCountryOpen(false);
+                    setCountrySearch('');
+                  }}
+                  style={{ opacity: isLiveCountry ? 1 : 0.55, cursor: isLiveCountry ? 'pointer' : 'not-allowed' }}
+                >
+                  <span className="curr-flag">{c.flag}</span>
+                  <span className="di-code" style={{ marginLeft: '8px' }}>{c.code}</span>
+                  <span className="di-name">{c.name}</span>
+                  {!isLiveCountry && (
+                    <span style={{
+                      marginLeft: 'auto',
+                      fontSize: '9px',
+                      fontWeight: '700',
+                      color: '#f59e0b',
+                      background: 'rgba(245,158,11,0.12)',
+                      border: '1px solid rgba(245,158,11,0.3)',
+                      borderRadius: '4px',
+                      padding: '1px 5px',
+                      letterSpacing: '0.03em',
+                      textTransform: 'uppercase',
+                      flexShrink: 0,
+                    }}>Soon</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="p2p-panel-wrap">
@@ -2746,6 +2821,7 @@ export default function P2PPanel({ connected, walletTokenList }) {
               const nextMode = offrampSubMode === 'standard' ? 'tag' : 'standard';
               setOfframpSubMode(nextMode);
               if (nextMode === 'tag') {
+                setShowHistoryView(false);
                 setMode('sell');
                 if (!userTagData) {
                   setShowTagModal(true);
@@ -2802,33 +2878,37 @@ export default function P2PPanel({ connected, walletTokenList }) {
         </div>
       )}
 
-      {/* Title Row with History Icon */}
-      <div className="title-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+      {/* Title Row with History Icon (or Country selector on TAG page) */}
+      <div className="title-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px', position: 'relative', zIndex: 10 }}>
         <h2 className="card-title" style={{ margin: 0, fontSize: '1.25rem' }}>
           {offrampSubMode === 'tag' ? 'Fiat Tag' : 'P2P Trade'}
         </h2>
-        {canTransact && publicKey && (
-          <button 
-            onClick={() => setShowHistoryView(!showHistoryView)}
-            style={{ 
-              background: showHistoryView ? 'rgba(255,255,255,0.1)' : 'none', 
-              border: 'none', 
-              color: showHistoryView ? 'white' : 'rgba(255,255,255,0.6)', 
-              cursor: 'pointer', 
-              padding: '6px',
-              borderRadius: '50%',
-              transition: 'all 0.2s',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}
-            title="Transaction History"
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10"></circle>
-              <polyline points="12 6 12 12 16 14"></polyline>
-            </svg>
-          </button>
+        {offrampSubMode === 'tag' ? (
+          renderCountrySelector()
+        ) : (
+          canTransact && publicKey && (
+            <button 
+              onClick={() => setShowHistoryView(!showHistoryView)}
+              style={{ 
+                background: showHistoryView ? 'rgba(255,255,255,0.1)' : 'none', 
+                border: 'none', 
+                color: showHistoryView ? 'white' : 'rgba(255,255,255,0.6)', 
+                cursor: 'pointer', 
+                padding: '6px',
+                borderRadius: '50%',
+                transition: 'all 0.2s',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
+              title="Transaction History"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <polyline points="12 6 12 12 16 14"></polyline>
+              </svg>
+            </button>
+          )
         )}
       </div>
       <p className="card-sub" style={{ marginBottom: '1.25rem' }}>
@@ -3053,10 +3133,10 @@ export default function P2PPanel({ connected, walletTokenList }) {
         </div>
       ) : (
         <>
-      {/* Mode switch + Country selector */}
-      <div className="p2p-header-row" style={{ marginBottom: '1.25rem' }}>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          {offrampSubMode !== 'tag' && (
+      {/* Mode switch + Country selector (only shown in standard Offramp / Onramp mode) */}
+      {offrampSubMode !== 'tag' && (
+        <div className="p2p-header-row" style={{ marginBottom: '1.25rem' }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <div
               className="bulk-pill"
               onClick={() => setMode(mode === 'sell' ? 'buy' : 'sell')}
@@ -3069,69 +3149,12 @@ export default function P2PPanel({ connected, walletTokenList }) {
                 <div className="tknob" />
               </div>
             </div>
-          )}
-
-        </div>
-
-        {/* Country picker */}
-        <div className="p2p-country-selector" style={{ position: 'relative' }}>
-          <div className="curr-selector" onClick={() => setCountryOpen(!countryOpen)}>
-            <span className="curr-flag">{selectedCountry.flag}</span>
-            <span style={{ marginLeft: '4px' }}>{selectedCountry.code}</span>
-            <span className="curr-chevron" style={{ marginLeft: '6px' }}>▼</span>
           </div>
-          {countryOpen && (
-            <div className="drop-menu" style={{ right: 0, zIndex: 100, minWidth: '220px' }}>
-              <div style={{ padding: '8px', borderBottom: '1px solid var(--border)' }} onClick={e => e.stopPropagation()}>
-                <input
-                  type="text"
-                  placeholder="Search country..."
-                  value={countrySearch}
-                  onChange={e => setCountrySearch(e.target.value)}
-                  style={{ width: '100%', padding: '6px 10px', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border)', borderRadius: '6px', color: 'white', fontSize: '12px', outline: 'none' }}
-                />
-              </div>
-              <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
-                {filteredCountries.map(c => {
-                  const isLiveCountry = LIVE_COUNTRY_CODES.has(c.code);
-                  return (
-                    <div
-                      key={c.code}
-                      className={`drop-item ${selectedCountry.code === c.code ? 'sel' : ''} ${!isLiveCountry ? 'country-coming-soon' : ''}`}
-                      onClick={() => {
-                        if (!isLiveCountry) return; // block non-Nigeria selection
-                        setSelectedCountry(c);
-                        setCountryOpen(false);
-                        setCountrySearch('');
-                      }}
-                      style={{ opacity: isLiveCountry ? 1 : 0.55, cursor: isLiveCountry ? 'pointer' : 'not-allowed' }}
-                    >
-                      <span className="curr-flag">{c.flag}</span>
-                      <span className="di-code" style={{ marginLeft: '8px' }}>{c.code}</span>
-                      <span className="di-name">{c.name}</span>
-                      {!isLiveCountry && (
-                        <span style={{
-                          marginLeft: 'auto',
-                          fontSize: '9px',
-                          fontWeight: '700',
-                          color: '#f59e0b',
-                          background: 'rgba(245,158,11,0.12)',
-                          border: '1px solid rgba(245,158,11,0.3)',
-                          borderRadius: '4px',
-                          padding: '1px 5px',
-                          letterSpacing: '0.03em',
-                          textTransform: 'uppercase',
-                          flexShrink: 0,
-                        }}>Soon</span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+
+          {/* Country picker */}
+          {renderCountrySelector()}
         </div>
-      </div>
+      )}
 
       {/* ── LIVE OFFRAMP ROUTE ── */}
       {isLiveRoute ? (
