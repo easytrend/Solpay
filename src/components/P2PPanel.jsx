@@ -1397,16 +1397,13 @@ export default function P2PPanel({ connected, walletTokenList }) {
       getFiatTagByName(clean)
         .then(data => {
           if (data) {
+            // Store resolved data ONLY in resolvedTagData — never touch the shared
+            // offramp fields (selectedBank / accountNumber / accountName) so that
+            // switching pages never exposes the recipient's private details.
             setResolvedTagData(data);
-            setSelectedBank(data.bank_name);
-            setAccountNumber(data.account_number);
-            setAccountName(data.account_name);
             setTagLookupError(null);
           } else {
             setResolvedTagData(null);
-            setSelectedBank('Choose Bank');
-            setAccountNumber('');
-            setAccountName('');
             if (clean.length >= 3) {
               setTagLookupError('Tag not found. Please check spelling.');
             }
@@ -2385,14 +2382,20 @@ export default function P2PPanel({ connected, walletTokenList }) {
         throw new Error(`Insufficient ${liveSelectedToken.symbol} balance. You have ${balance.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${liveSelectedToken.symbol} but need ${estCryptoAmount.toFixed(4)} ${liveSelectedToken.symbol}.`);
       }
 
-      const bankObj = apiBanks.find(b => getBankNameString(b) === selectedBank);
-      const bankId = bankObj ? (bankObj.id || bankObj.code || bankObj.name) : selectedBank;
+      // In TAG mode, read bank/account details from the privately resolved tag data
+      // so the shared offramp fields are never touched or exposed.
+      const effectiveBankName   = offrampSubMode === 'tag' ? (resolvedTagData?.bank_name   || '') : selectedBank;
+      const effectiveAcctNumber = offrampSubMode === 'tag' ? (resolvedTagData?.account_number || '') : accountNumber;
+      const effectiveAcctName   = offrampSubMode === 'tag' ? (resolvedTagData?.account_name  || '') : accountName;
+
+      const bankObj = apiBanks.find(b => getBankNameString(b) === effectiveBankName);
+      const bankId = bankObj ? (bankObj.id || bankObj.code || bankObj.name) : effectiveBankName;
 
       // 1. Create paj_ramp off-ramp order
       const order = await createOfframpOrder(
         {
           bank: bankId,
-          accountNumber: accountNumber.replace(/\D/g, '').trim(),
+          accountNumber: effectiveAcctNumber.replace(/\D/g, '').trim(),
           currency: selectedCountry.currency,
           fiatAmount: parsedAmt,
           mint: liveSelectedToken.mint,
@@ -2596,18 +2599,21 @@ export default function P2PPanel({ connected, walletTokenList }) {
         id: order.id,
         sig,
         ts: Date.now(),
-        bank: displayBank,
-        account: accountNumber.trim(),
-        name: accountName || 'Account Holder',
+        bank: offrampSubMode === 'tag' ? effectiveBankName : displayBank,
+        account: effectiveAcctNumber.trim(),
+        name: effectiveAcctName || 'Account Holder',
         recipient_tag: offrampSubMode === 'tag' ? recipientTagInput : undefined
       });
       localStorage.setItem(`paj_user_orders_${walletKey}`, JSON.stringify(existing.slice(0, 100)));
-      localStorage.setItem(`paj_account_number_${walletKey}`, accountNumber.trim());
-      localStorage.setItem(`paj_bank_name_${walletKey}`, displayBank);
-      localStorage.setItem(`paj_account_name_${walletKey}`, accountName || 'Account Holder');
-      localStorage.setItem(`paj_account_number_default`, accountNumber.trim());
-      localStorage.setItem(`paj_bank_name_default`, displayBank);
-      localStorage.setItem(`paj_account_name_default`, accountName || 'Account Holder');
+      // Only persist Offramp details to localStorage (not TAG — those are private)
+      if (offrampSubMode !== 'tag') {
+        localStorage.setItem(`paj_account_number_${walletKey}`, effectiveAcctNumber.trim());
+        localStorage.setItem(`paj_bank_name_${walletKey}`, displayBank);
+        localStorage.setItem(`paj_account_name_${walletKey}`, effectiveAcctName || 'Account Holder');
+        localStorage.setItem(`paj_account_number_default`, effectiveAcctNumber.trim());
+        localStorage.setItem(`paj_bank_name_default`, displayBank);
+        localStorage.setItem(`paj_account_name_default`, effectiveAcctName || 'Account Holder');
+      }
 
       // BUG FIX 1: Use parsedAmt (always the fiat-side value) instead of
       // Number(amount) which is the raw input string and is wrong when the
@@ -2630,9 +2636,9 @@ export default function P2PPanel({ connected, walletTokenList }) {
         fiatCurrency: selectedCountry.currency,
         fiatAmount: fiatLogged,
         usdValue: usdLogged,
-        bankName: displayBank,
-        accountNumber: accountNumber.trim(),
-        accountName: accountName || 'Account Holder',
+        bankName: offrampSubMode === 'tag' ? effectiveBankName : displayBank,
+        accountNumber: effectiveAcctNumber.trim(),
+        accountName: effectiveAcctName || 'Account Holder',
         status: 'PENDING',
         userEmail: sessionEmail || undefined,
         depositAddress: order.address,
@@ -2672,9 +2678,9 @@ export default function P2PPanel({ connected, walletTokenList }) {
       setSuccessDetails({
         amount: `${baseCryptoAmount.toFixed(4)} ${liveSelectedToken.symbol}`,
         fiat: `${selectedCountry.symbol}${fiatAmountText}`,
-        bank: displayBank,
-        account: accountNumber,
-        name: accountName || 'Account Holder',
+        bank: offrampSubMode === 'tag' ? effectiveBankName : displayBank,
+        account: effectiveAcctNumber,
+        name: effectiveAcctName || 'Account Holder',
         orderId: order.id,
         sig,
         status: 'PENDING',
