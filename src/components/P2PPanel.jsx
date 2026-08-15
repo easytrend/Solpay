@@ -1072,6 +1072,11 @@ export default function P2PPanel({ connected, walletTokenList }) {
 
   // ── Resolve account name ──────────────────────────────────────────────────
   useEffect(() => {
+    // Never resolve account names while the user is on the TAG page
+    if (offrampSubMode === 'tag') {
+      setAccountName('');
+      return;
+    }
     if (!accountNumber || selectedBank === 'Choose Bank' || !sessionToken) {
       setAccountName('');
       return;
@@ -1110,7 +1115,27 @@ export default function P2PPanel({ connected, walletTokenList }) {
     }, 300);
 
     return () => { clearTimeout(timer); setResolvingName(false); };
-  }, [accountNumber, selectedBank, selectedCountry, apiBanks, sessionToken]);
+  }, [accountNumber, selectedBank, selectedCountry, apiBanks, sessionToken, offrampSubMode]);
+
+  // ── Isolate TAG vs Offramp state on page switch ───────────────────────────
+  // Ensures the two pages are completely private from each other.
+  useEffect(() => {
+    if (offrampSubMode === 'tag') {
+      // Entering TAG mode: clear all Offramp-specific fields so they
+      // don't carry over or resolve in the background.
+      setSelectedBank('Choose Bank');
+      setAccountNumber('');
+      setAccountName('');
+      setAmount('');
+      setResolvingName(false);
+    } else {
+      // Returning to standard Offramp: clear all TAG-specific fields.
+      setRecipientTagInput('');
+      setResolvedTagData(null);
+      setResolvingTag(false);
+      setTagLookupError(null);
+    }
+  }, [offrampSubMode]);
 
   // ── Reset on country / mode change ───────────────────────────────────────
   useEffect(() => {
