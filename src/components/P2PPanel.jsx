@@ -1902,20 +1902,32 @@ export default function P2PPanel({ connected, walletTokenList }) {
   const walletBalance = liveSelectedToken.balance || 0;
   const offrampExceedsBalance = parsedAmt > 0 && baseCryptoAmount > (walletBalance + 0.0001);
 
-  const isFormValid =
-    !!sessionToken &&
-    isLiveRoute &&
-    !apiError &&
-    parsedAmt > 0 &&
-    !offrampBelowMinimum &&
-    !offrampExceedsMaximum &&
-    !offrampExceedsBalance &&
-    !!accountNumber &&
-    accountNumber.trim().length >= 8 &&
-    selectedBank !== 'Choose Bank' &&
-    !!accountName &&
-    accountName !== 'No Bank Match' &&
-    !resolvingName;
+  const isFormValid = (() => {
+    const base =
+      !!sessionToken &&
+      isLiveRoute &&
+      !apiError &&
+      parsedAmt > 0 &&
+      !offrampBelowMinimum &&
+      !offrampExceedsMaximum &&
+      !offrampExceedsBalance;
+
+    if (offrampSubMode === 'tag') {
+      // TAG mode: valid when a tag has been successfully resolved
+      return base && !!resolvedTagData && !resolvingTag;
+    }
+
+    // Standard Offramp mode: valid when bank account details are fully resolved
+    return (
+      base &&
+      !!accountNumber &&
+      accountNumber.trim().length >= 8 &&
+      selectedBank !== 'Choose Bank' &&
+      !!accountName &&
+      accountName !== 'No Bank Match' &&
+      !resolvingName
+    );
+  })();
 
   const handleIncrement = () => {
     const current = parseFloat(amount) || 0;
@@ -2372,8 +2384,12 @@ export default function P2PPanel({ connected, walletTokenList }) {
     if (apiError) { setP2pError(`PajCash API error: ${apiError}`); return; }
     if (!connected || !publicKey) { setP2pError('Please connect your Solana wallet first.'); return; }
     if (!amount || parseFloat(amount) <= 0) { setP2pError('Please enter a valid amount.'); return; }
-    if (!accountNumber) { setP2pError('Please enter your bank account number.'); return; }
-    if (selectedBank === 'Choose Bank') { setP2pError('Please select a bank.'); return; }
+    if (offrampSubMode === 'tag') {
+      if (!resolvedTagData) { setP2pError('Please enter a valid Fiat Tag to send to.'); return; }
+    } else {
+      if (!accountNumber) { setP2pError('Please enter your bank account number.'); return; }
+      if (selectedBank === 'Choose Bank') { setP2pError('Please select a bank.'); return; }
+    }
 
     setSubmitting(true);
     try {
