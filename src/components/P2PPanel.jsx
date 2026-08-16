@@ -2881,7 +2881,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
               if (nextMode === 'tag') {
                 setShowHistoryView(false);
                 setMode('sell');
-                if (!userTagData) {
+                if (!userTagData && sessionToken) {
                   setShowTagModal(true);
                 }
               }
@@ -2917,7 +2917,9 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
                   setTagModalAcctNumber(userTagData.account_number || '');
                   setTagModalAcctName(userTagData.account_name || '');
                 }
-                setShowTagModal(true);
+                if (sessionToken) {
+                  setShowTagModal(true);
+                }
               }}
               style={{
                 background: 'rgba(255, 255, 255, 0.06)',
