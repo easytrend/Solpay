@@ -1134,6 +1134,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
       setResolvedTagData(null);
       setResolvingTag(false);
       setTagLookupError(null);
+      setAmount(''); // Clear amount typed in TAG mode
     }
   }, [offrampSubMode]);
 
