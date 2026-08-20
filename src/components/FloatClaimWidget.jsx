@@ -525,6 +525,7 @@ export default function FloatClaimWidget({ liveSolPrice, onClaimSuccess }) {
       const ALLOWED_CASHBACK_PROGRAMS = new Set([
         '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P', // Pump.fun bonding curve
         'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA', // Pump.fun AMM
+        '47db2zQxySA2fRDrnFKi8cvZRqkZTUUid6Lg4ktCZ1jU', // Pump.fun main program
         'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr', // Memo program
         '11111111111111111111111111111111',               // System Program (validated per-instruction below)
         'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',  // SPL Token (legacy)
