@@ -3846,7 +3846,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
                             setAmount('0');
                             return;
                           }
-                          const rawMaxCrypto = balance / 1.005;
+                          const rawMaxCrypto = Math.max(0, balance - platformFeeInToken);
                           if (offrampInputMode === 'crypto') {
                             const maxCrypto = Math.floor(rawMaxCrypto * 10000) / 10000;
                             setAmount(maxCrypto > 0 ? maxCrypto.toString() : '0');
