@@ -744,10 +744,14 @@ export default function SwapWidget({
         cryptoAmt = (n / currRate) / price;
       }
 
-      // Fresh SOL balance check
+      // Fresh SOL balance check for gas (all swaps require SOL)
+      const freshLamports = await connection.getBalance(publicKey, 'confirmed');
       if (inputToken.symbol === 'SOL') {
-        const freshLamports = await connection.getBalance(publicKey, 'confirmed');
         if (cryptoAmt + 0.005 > freshLamports / 1e9) throw new Error(`Insufficient SOL (need ${cryptoAmt.toFixed(5)} + fees, have ${(freshLamports/1e9).toFixed(5)}).`);
+      } else {
+        if (freshLamports < 5000) {
+          throw new Error('Insufficient SOL for network fees. You need a small amount of SOL in your wallet to pay for gas.');
+        }
       }
 
       const base64Tx = await buildSwapTransaction(quote, publicKey.toBase58());
@@ -767,6 +771,9 @@ export default function SwapWidget({
       // Pre-flight simulation
       const sim = await connection.simulateTransaction(vTx);
       if (sim.value.err) {
+        if (sim.value.err === 'AccountNotFound') {
+          throw new Error('Simulation failed: Account Not Found. This usually means your wallet has 0 SOL, or a required token account could not be created.');
+        }
         const logs = sim.value.logs?.slice(0, 3).join(' | ') || '';
         throw new Error(`Simulation failed: ${JSON.stringify(sim.value.err)}${logs ? ' — ' + logs : ''}`);
       }
