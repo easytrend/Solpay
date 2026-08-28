@@ -2506,11 +2506,15 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
 
       const effectiveUserWallet = manualWalletAddress || (resolvedTagData?.wallet_address) || 'guest_manual';
 
+      const actualCryptoAmount = order.amount || estCryptoAmount;
+
       // Log transaction to Supabase under the manual wallet address
       logP2PTransaction({
         userAddress: effectiveUserWallet,
         orderId: order.id,
         tokenSymbol: 'USDC',
+        cryptoAmount: actualCryptoAmount,
+        fiatCurrency: selectedCountry.currency,
         fiatAmount: parsedAmt,
         usdValue: parsedAmt / (activeNgnRate || 1),
         bankName: effectiveBankName,
@@ -2525,7 +2529,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
       setManualOrder({
         id: order.id,
         depositAddress: order.address,
-        cryptoAmount: baseCryptoAmount,
+        cryptoAmount: actualCryptoAmount,
         fiatAmount: parsedAmt,
         fiatText: fiatAmountText,
         tokenSymbol: 'USDC',
@@ -2549,7 +2553,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
         setManualConfirmCard({
           fiatAmount: parsedAmt,
           fiatText: fiatAmountText,
-          cryptoAmount: baseCryptoAmount,
+          cryptoAmount: actualCryptoAmount,
           recipientTag: recipientTagInput || (resolvedTagData?.tag_name) || null,
           date: new Date(),
           txSignature: txSig || null,
