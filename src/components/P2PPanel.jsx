@@ -2986,22 +2986,55 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
   };
 
   // ── Wallet not connected guard ────────────────────────────────────────────
-  if (!connected || !publicKey) {
+  if ((!connected || !publicKey) && !isManualOfframp) {
     return (
-      <div style={{
-        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-        minHeight: '320px', textAlign: 'center', padding: '20px 24px',
-        background: 'rgba(255,255,255,0.01)', border: '1.5px dashed rgba(255,255,255,0.1)',
-        borderRadius: '16px', margin: '10px 0',
-      }}>
-        <div style={{ fontSize: '38px', marginBottom: '14px' }}>🔌</div>
-        <h4 style={{ fontSize: '15px', fontWeight: 'bold', color: 'white', marginBottom: '10px' }}>
-          Connect Your Wallet
-        </h4>
-        <p style={{ fontSize: '11px', color: 'var(--text3)', maxWidth: '300px', lineHeight: '1.5' }}>
-          Connect your Solana wallet to access live off-ramp settlements.
-          Your bank details will be saved automatically for future visits.
-        </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', margin: '4px 0' }}>
+        {/* Top button for Guest Offramp without connecting wallet */}
+        <button
+          type="button"
+          onClick={() => {
+            setIsManualOfframp(true);
+            setOfframpSubMode('tag');
+            setMode('sell');
+          }}
+          style={{
+            width: '100%',
+            background: 'linear-gradient(135deg, rgba(163, 230, 53, 0.2), rgba(163, 230, 53, 0.06))',
+            border: '1px solid rgba(163, 230, 53, 0.5)',
+            color: 'var(--lime)',
+            fontSize: '13px',
+            fontWeight: '800',
+            padding: '13px 18px',
+            borderRadius: '16px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '8px',
+            transition: 'all 0.2s ease',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.35)'
+          }}
+        >
+          <span style={{ fontSize: '15px' }}>⚡</span>
+          <span>Offramp Without Connecting Wallet (Guest Mode)</span>
+          <span style={{ fontSize: '14px', marginLeft: '4px' }}>→</span>
+        </button>
+
+        <div style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          minHeight: '260px', textAlign: 'center', padding: '20px 24px',
+          background: 'rgba(255,255,255,0.01)', border: '1.5px dashed rgba(255,255,255,0.1)',
+          borderRadius: '16px',
+        }}>
+          <div style={{ fontSize: '38px', marginBottom: '14px' }}>🔌</div>
+          <h4 style={{ fontSize: '15px', fontWeight: 'bold', color: 'white', marginBottom: '10px' }}>
+            Connect Your Wallet
+          </h4>
+          <p style={{ fontSize: '11px', color: 'var(--text3)', maxWidth: '300px', lineHeight: '1.5' }}>
+            Connect your Solana wallet to access live off-ramp settlements.
+            Your bank details will be saved automatically for future visits.
+          </p>
+        </div>
       </div>
     );
   }
