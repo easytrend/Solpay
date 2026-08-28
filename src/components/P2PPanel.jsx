@@ -2999,9 +2999,9 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
           }}
           style={{
             width: '100%',
-            background: 'linear-gradient(135deg, rgba(163, 230, 53, 0.2), rgba(163, 230, 53, 0.06))',
-            border: '1px solid rgba(163, 230, 53, 0.5)',
-            color: 'var(--lime)',
+            background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02))',
+            border: '1px solid rgba(255, 255, 255, 0.2)',
+            color: 'rgba(255, 255, 255, 0.65)',
             fontSize: '13px',
             fontWeight: '800',
             padding: '13px 18px',
@@ -3016,7 +3016,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
           }}
         >
           <span style={{ fontSize: '15px' }}>⚡</span>
-          <span>Offramp Without Connecting Wallet (Guest Mode)</span>
+          <span>Guest Offramp</span>
           <span style={{ fontSize: '14px', marginLeft: '4px' }}>→</span>
         </button>
 
