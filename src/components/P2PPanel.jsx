@@ -4690,7 +4690,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
                     className="send-btn"
                     onClick={() => { setOnrampOrder(null); setOnrampStatus(null); setOnrampAmount(''); }}
                   >
-                    🎉 Done — Start New Order
+                    Done — Start New Order
                   </button>
                 ) : onrampStatus === 'paid' || onrampStatus === 'processing' || onrampStatus === 'swapping' || onrampStatus === 'forwarding' ? (
                   <button
@@ -5919,7 +5919,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
                   setAmount('');
                 }}
               >
-                🎉 Done — Start New Transfer
+                Done — Start New Transfer
               </button>
             ) : (
               <button
