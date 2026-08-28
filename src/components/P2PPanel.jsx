@@ -3015,7 +3015,6 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
             boxShadow: '0 4px 20px rgba(0,0,0,0.35)'
           }}
         >
-          <span style={{ fontSize: '15px' }}>⚡</span>
           <span>Guest Offramp</span>
           <span style={{ fontSize: '14px', marginLeft: '4px' }}>→</span>
         </button>
