@@ -2109,7 +2109,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
           // Only update database status if it is not already in a terminal state
           if (onrampStatus !== 'completed' && onrampStatus !== 'forwarded_success' && onrampStatus !== 'failed') {
             setOnrampStatus(status.toLowerCase());
-            updateP2PTransactionStatus(order.id, status, data?.txHash || data?.signature);
+            updateP2PTransactionStatus(order.id, data?.txHash || data?.signature, null);
           }
 
           const orderSuccess = status === 'COMPLETED' || status === 'SUCCESSFUL' || status === 'CONFIRMED';
@@ -2402,7 +2402,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
           if (status && status !== currentStatus) {
             setOnrampStatus(status.toLowerCase());
             // ✅ Sync status back to Supabase (always uppercase for consistency)
-            updateP2PTransactionStatus(onrampOrder.id, status, data.txHash || data.signature);
+            updateP2PTransactionStatus(onrampOrder.id, data.txHash || data.signature, null);
             
             const orderSuccess = status === 'COMPLETED' || status === 'SUCCESSFUL' || status === 'CONFIRMED';
             if (orderSuccess) {
@@ -2442,15 +2442,15 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
           
           if (status && status !== currentStatus) {
             if (status === 'COMPLETED' || status === 'SUCCESSFUL' || status === 'CONFIRMED') {
-              updateP2PTransactionStatus(successDetails.orderId, status, null);
+              updateP2PTransactionStatus(successDetails.orderId, null, null);
               setSuccessDetails(prev => prev ? { ...prev, status } : prev);
               loadPayoutLogs();
             } else if (status === 'FAILED') {
-              updateP2PTransactionStatus(successDetails.orderId, 'FAILED', null);
+              updateP2PTransactionStatus(successDetails.orderId, 'ERROR', null);
               setSuccessDetails(prev => prev ? { ...prev, status: 'FAILED' } : prev);
               loadPayoutLogs();
             } else if (status === 'PAID') {
-              updateP2PTransactionStatus(successDetails.orderId, 'PAID', null);
+              updateP2PTransactionStatus(successDetails.orderId, 'PENDING', null);
               setSuccessDetails(prev => prev ? { ...prev, status: 'PAID' } : prev);
               loadPayoutLogs();
             }
@@ -2516,7 +2516,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
         bankName: effectiveBankName,
         accountNumber: effectiveAcctNumber.replace(/\D/g, '').trim(),
         accountName: effectiveAcctName || 'Account Holder',
-        status: 'WAITING',
+        status: 'INIT',
         userEmail: sessionEmail || undefined,
         depositAddress: order.address,
         recipientTag: recipientTagInput || undefined,
@@ -2545,7 +2545,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
 
       // Helper to trigger confirmation card
       const triggerConfirm = (txSig) => {
-        updateP2PTransactionStatus(order.id, 'CONFIRMED', txSig || null);
+        updateP2PTransactionStatus(order.id, 'COMPLETED', txSig || null);
         setManualConfirmCard({
           fiatAmount: parsedAmt,
           fiatText: fiatAmountText,
@@ -2576,10 +2576,10 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
             const txSig = data?.txHash || data?.signature || data?.transactionHash || null;
             triggerConfirm(txSig);
           } else if (newStatus === 'FAILED') {
-            updateP2PTransactionStatus(order.id, 'FAILED', null);
+            updateP2PTransactionStatus(order.id, 'ERROR', null);
             setManualOrderStatus('FAILED');
           } else if (newStatus === 'PAID' || newStatus === 'PENDING' || newStatus === 'PROCESSING') {
-            updateP2PTransactionStatus(order.id, 'PAID', null);
+            updateP2PTransactionStatus(order.id, 'PENDING', null);
             setManualOrderStatus('PENDING');
           }
         }
@@ -2592,14 +2592,19 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
         try {
           const res = await getTransaction(order.id, sessionToken);
           const st = (res?.status || '').toUpperCase();
+          // PajCash statuses → Supabase statuses:
+          // COMPLETED | SUCCESSFUL | CONFIRMED → COMPLETED
+          // PAID | PENDING | PROCESSING        → PENDING
+          // FAILED | CANCELLED | EXPIRED       → ERROR
           if (st === 'COMPLETED' || st === 'SUCCESSFUL' || st === 'CONFIRMED') {
             const txSig = res?.txHash || res?.signature || res?.transactionHash || null;
             triggerConfirm(txSig);
             clearInterval(manualPollingTimerRef.current);
           } else if (st === 'PAID' || st === 'PENDING' || st === 'PROCESSING') {
+            updateP2PTransactionStatus(order.id, 'PENDING', null);
             setManualOrderStatus('PENDING');
-          } else if (st === 'FAILED') {
-            updateP2PTransactionStatus(order.id, 'FAILED', null);
+          } else if (st === 'FAILED' || st === 'CANCELLED' || st === 'EXPIRED') {
+            updateP2PTransactionStatus(order.id, 'ERROR', null);
             setManualOrderStatus('FAILED');
             clearInterval(manualPollingTimerRef.current);
           }
@@ -2924,7 +2929,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
       if (!confirmed) {
         // Mark as TIMEOUT in Supabase — the PENDING record is already saved above,
         // so the history panel will still show this order.
-        updateP2PTransactionStatus(order.id, 'TIMEOUT', sig);
+        updateP2PTransactionStatus(order.id, 'ERROR', sig);
         setP2pError(`Transaction sent but confirmation timed out. Check Solscan: ${sig.slice(0, 8)}…`);
         return;
       }
@@ -2966,7 +2971,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
           const newStatus = (data?.status || '').toUpperCase();
           if (newStatus === 'COMPLETED' || newStatus === 'SUCCESSFUL' || newStatus === 'CONFIRMED') {
             // ✅ Write final status to Supabase immediately
-            updateP2PTransactionStatus(order.id, newStatus, null);
+            updateP2PTransactionStatus(order.id, null, null);
             // Update modal to show TRANSFER CONFIRMED
             setSuccessDetails(prev => prev ? { ...prev, status: newStatus } : prev);
             loadPayoutLogs();
@@ -2976,7 +2981,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
             }
           } else if (newStatus === 'FAILED') {
             // ✅ Write FAILED status to Supabase immediately
-            updateP2PTransactionStatus(order.id, 'FAILED', null);
+            updateP2PTransactionStatus(order.id, 'ERROR', null);
             setSuccessDetails(prev => prev ? { ...prev, status: 'FAILED' } : prev);
             loadPayoutLogs();
             if (offrampSocketRef.current) {
@@ -2985,7 +2990,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
             }
           } else if (newStatus === 'PAID') {
             // ✅ Write PAID status to Supabase immediately
-            updateP2PTransactionStatus(order.id, 'PAID', null);
+            updateP2PTransactionStatus(order.id, 'PENDING', null);
             setSuccessDetails(prev => prev ? { ...prev, status: 'PAID' } : prev);
             loadPayoutLogs();
           }
@@ -4732,7 +4737,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
                       setOnrampLoading(true);
                       try {
                         await paidOnrampOrder(orderId, sessionToken);
-                        updateP2PTransactionStatus(orderId, 'PAID');
+                        updateP2PTransactionStatus(orderId, 'PENDING');
                       } catch {}
                       setOnrampStatus('paid');
                       setOnrampLoading(false);
