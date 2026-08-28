@@ -452,6 +452,20 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
   const [resolvingTag, setResolvingTag] = useState(false);
   const [tagLookupError, setTagLookupError] = useState(null);
 
+  // ── Manual / Guest Offramp (No Wallet Connection) State ─────────────────
+  const [isManualOfframp, setIsManualOfframp] = useState(false);
+  const [manualWalletAddress, setManualWalletAddress] = useState(() => {
+    try { return localStorage.getItem('paj_manual_wallet') || ''; } catch { return ''; }
+  });
+  const [manualTagModalWallet, setManualTagModalWallet] = useState('');
+  const [manualOrder, setManualOrder] = useState(null); // { id, depositAddress, cryptoAmount, fiatAmount, fiatText, tokenSymbol, bankName, accountNumber, accountName, recipientTag }
+  const [manualOrderStatus, setManualOrderStatus] = useState(null); // 'WAITING' | 'PENDING' | 'CONFIRMED' | 'FAILED' | 'EXPIRED'
+  const [manualTimeLeft, setManualTimeLeft] = useState(1800); // 30 mins (1800 seconds)
+  const [copiedManualAddr, setCopiedManualAddr] = useState(false);
+  const [copiedManualAmt, setCopiedManualAmt] = useState(false);
+  const manualSocketRef = useRef(null);
+  const manualPollingTimerRef = useRef(null);
+
   // ── Manual Release State for History Pop-up ──────────────────────────────
   const [releasingLogId, setReleasingLogId] = useState(null);
   const [releaseError, setReleaseError] = useState(null);
@@ -773,6 +787,46 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
         setAuthStep('input_email');
       });
   }, [publicKey]);
+
+  // ── Manual Offramp 30-minute countdown timer ─────────────────────────────
+  useEffect(() => {
+    if (!manualOrder || manualOrderStatus !== 'WAITING') return;
+    const interval = setInterval(() => {
+      setManualTimeLeft(prev => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          setManualOrderStatus('EXPIRED');
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [manualOrder, manualOrderStatus]);
+
+  // ── Restore manual mode session and tag ──────────────────────────────────
+  useEffect(() => {
+    if (!isManualOfframp || publicKey) return;
+    const cachedToken = localStorage.getItem('paj_manual_sessionToken');
+    const cachedEmail = localStorage.getItem('paj_manual_sessionEmail');
+    const cachedExpiry = localStorage.getItem('paj_manual_sessionExpiry');
+    if (cachedToken && cachedExpiry && Date.now() < Number(cachedExpiry)) {
+      setSessionToken(cachedToken);
+      setSessionEmail(cachedEmail || '');
+      setAuthStep('logged_in');
+    } else {
+      setAuthStep('input_email');
+    }
+
+    const storedWallet = localStorage.getItem('paj_manual_wallet');
+    if (storedWallet) {
+      setManualWalletAddress(storedWallet);
+      setManualTagModalWallet(storedWallet);
+      getFiatTagByWallet(storedWallet).then(tag => {
+        if (tag) setUserTagData(tag);
+      }).catch(() => {});
+    }
+  }, [isManualOfframp, publicKey]);
 
   // ── Load supported tokens ─────────────────────────────────────────────────
   useEffect(() => {
@@ -1447,8 +1501,13 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
 
   // ── Save user's Fiat Tag to Supabase ─────────────────────────────────────
   const handleSaveFiatTag = useCallback(async () => {
-    if (!publicKey) {
-      setTagModalError('Please connect your wallet first.');
+    const effectiveWallet = (publicKey ? publicKey.toBase58() : manualTagModalWallet.trim()) || manualWalletAddress;
+    if (!effectiveWallet) {
+      setTagModalError('Please enter your Solana wallet address.');
+      return;
+    }
+    if (effectiveWallet.length < 32 || effectiveWallet.length > 44) {
+      setTagModalError('Please enter a valid Solana wallet address (32–44 characters).');
       return;
     }
     if (!sessionToken) {
@@ -1476,13 +1535,18 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
       const bankCode = bankObj ? (bankObj.code || bankObj.id) : null;
 
       const registered = await registerFiatTag({
-        walletAddress: publicKey.toBase58(),
+        walletAddress: effectiveWallet,
         tagName: tagModalInput,
         bankName: tagModalBank,
         bankCode,
         accountNumber: cleanAcct,
         accountName: tagModalAcctName || 'Account Holder',
       });
+
+      if (!publicKey) {
+        localStorage.setItem('paj_manual_wallet', effectiveWallet);
+        setManualWalletAddress(effectiveWallet);
+      }
 
       setUserTagData(registered);
       setShowTagModal(false);
@@ -1491,7 +1555,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
     } finally {
       setTagModalSaving(false);
     }
-  }, [publicKey, tagModalInput, tagModalBank, tagModalAcctNumber, tagModalAcctName, apiBanks]);
+  }, [publicKey, manualTagModalWallet, manualWalletAddress, sessionToken, tagModalInput, tagModalBank, tagModalAcctNumber, tagModalAcctName, apiBanks]);
 
   // ── Routing animation ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -1558,6 +1622,27 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
           // replaced — on their next wallet-connect check their token will
           // not match Supabase and they will be silently kicked out.
           saveSession(key, emailInput.trim(), res.token, expiryMs);
+        } else {
+          // Manual / Guest mode: save session to manual storage keys
+          const expiryMs = Date.now() + 20 * 365 * 24 * 60 * 60 * 1000;
+          localStorage.setItem('paj_manual_sessionToken', res.token);
+          localStorage.setItem('paj_manual_sessionEmail', emailInput.trim());
+          localStorage.setItem('paj_manual_sessionExpiry', String(expiryMs));
+
+          const storedWallet = localStorage.getItem('paj_manual_wallet');
+          if (storedWallet) {
+            getFiatTagByWallet(storedWallet).then(tag => {
+              if (tag) {
+                setUserTagData(tag);
+              } else {
+                setShowTagModal(true);
+              }
+            }).catch(() => {
+              setShowTagModal(true);
+            });
+          } else {
+            setShowTagModal(true);
+          }
         }
       } else {
         throw new Error('Verify response did not include session token.');
@@ -1911,7 +1996,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
       parsedAmt > 0 &&
       !offrampBelowMinimum &&
       !offrampExceedsMaximum &&
-      !offrampExceedsBalance;
+      (isManualOfframp || !offrampExceedsBalance);
 
     if (offrampSubMode === 'tag') {
       // TAG mode: valid when a tag has been successfully resolved
@@ -2380,6 +2465,132 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
       clearInterval(interval);
     };
   }, [successDetails, showSuccess, sessionToken]);
+
+  // ── Manual / Guest Offramp Submit (No Wallet Connection) ────────────────
+  const handleManualOfframpSubmit = async () => {
+    setP2pError(null);
+    if (!isLiveRoute) { setP2pError('This region/mode is not currently supported.'); return; }
+    if (!PAJCASH_API_KEY) { setP2pError('PajCash API Key is not configured.'); return; }
+    if (!sessionToken) { setP2pError('Please verify your email OTP session first.'); return; }
+    if (apiError) { setP2pError(`PajCash API error: ${apiError}`); return; }
+    if (!amount || parseFloat(amount) <= 0) { setP2pError('Please enter a valid amount.'); return; }
+    if (!resolvedTagData) { setP2pError('Please enter a valid Fiat Tag to send to.'); return; }
+
+    setSubmitting(true);
+    try {
+      const effectiveBankName   = resolvedTagData?.bank_name   || '';
+      const effectiveAcctNumber = resolvedTagData?.account_number || '';
+      const effectiveAcctName   = resolvedTagData?.account_name  || '';
+
+      const bankObj = apiBanks.find(b => getBankNameString(b) === effectiveBankName);
+      const bankId = bankObj ? (bankObj.id || bankObj.code || bankObj.name) : effectiveBankName;
+
+      // Create PajCash off-ramp order using USDC mint
+      const usdcMint = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+      const order = await createOfframpOrder(
+        {
+          bank: bankId,
+          accountNumber: effectiveAcctNumber.replace(/\D/g, '').trim(),
+          currency: selectedCountry.currency,
+          fiatAmount: parsedAmt,
+          mint: usdcMint,
+          chain: 'SOLANA',
+          fee: platformFee,
+          webhookURL: import.meta.env.VITE_PAJCASH_WEBHOOK_URL || undefined,
+        },
+        sessionToken
+      );
+
+      if (!order?.address) throw new Error('PajCash did not return a deposit address for this order.');
+
+      const effectiveUserWallet = manualWalletAddress || (resolvedTagData?.wallet_address) || 'guest_manual';
+
+      // Log transaction to Supabase under the manual wallet address
+      logP2PTransaction({
+        userAddress: effectiveUserWallet,
+        orderId: order.id,
+        tokenSymbol: 'USDC',
+        fiatAmount: parsedAmt,
+        usdValue: parsedAmt / (activeNgnRate || 1),
+        bankName: effectiveBankName,
+        accountNumber: effectiveAcctNumber.replace(/\D/g, '').trim(),
+        accountName: effectiveAcctName || 'Account Holder',
+        status: 'WAITING',
+        userEmail: sessionEmail || undefined,
+        depositAddress: order.address,
+        recipientTag: recipientTagInput || undefined,
+      });
+
+      setManualOrder({
+        id: order.id,
+        depositAddress: order.address,
+        cryptoAmount: baseCryptoAmount,
+        fiatAmount: parsedAmt,
+        fiatText: fiatAmountText,
+        tokenSymbol: 'USDC',
+        bankName: effectiveBankName,
+        accountNumber: effectiveAcctNumber,
+        accountName: effectiveAcctName,
+        recipientTag: recipientTagInput,
+      });
+      setManualOrderStatus('WAITING');
+      setManualTimeLeft(1800); // 30 mins
+
+      // Clean up previous socket if open
+      if (manualSocketRef.current) {
+        try { manualSocketRef.current.disconnect(); } catch {}
+        manualSocketRef.current = null;
+      }
+
+      // Start live observer for incoming deposit and payout
+      const observer = observeOrder({
+        orderId: order.id,
+        onOrderUpdate: (data) => {
+          const newStatus = (data?.status || '').toUpperCase();
+          if (newStatus === 'COMPLETED' || newStatus === 'SUCCESSFUL' || newStatus === 'CONFIRMED') {
+            updateP2PTransactionStatus(order.id, newStatus, null);
+            setManualOrderStatus('CONFIRMED');
+            if (manualSocketRef.current) {
+              try { manualSocketRef.current.disconnect(); } catch {}
+              manualSocketRef.current = null;
+            }
+          } else if (newStatus === 'FAILED') {
+            updateP2PTransactionStatus(order.id, 'FAILED', null);
+            setManualOrderStatus('FAILED');
+          } else if (newStatus === 'PAID' || newStatus === 'PENDING' || newStatus === 'PROCESSING') {
+            updateP2PTransactionStatus(order.id, 'PAID', null);
+            setManualOrderStatus('PENDING');
+          }
+        }
+      });
+      manualSocketRef.current = observer;
+
+      // Start fallback interval polling
+      if (manualPollingTimerRef.current) clearInterval(manualPollingTimerRef.current);
+      manualPollingTimerRef.current = setInterval(async () => {
+        try {
+          const res = await getTransaction(order.id, sessionToken);
+          const st = (res?.status || '').toUpperCase();
+          if (st === 'COMPLETED' || st === 'SUCCESSFUL' || st === 'CONFIRMED') {
+            setManualOrderStatus('CONFIRMED');
+            updateP2PTransactionStatus(order.id, st, null);
+            clearInterval(manualPollingTimerRef.current);
+          } else if (st === 'PAID' || st === 'PENDING' || st === 'PROCESSING') {
+            setManualOrderStatus('PENDING');
+          } else if (st === 'FAILED') {
+            setManualOrderStatus('FAILED');
+            clearInterval(manualPollingTimerRef.current);
+          }
+        } catch {}
+      }, 8000);
+
+    } catch (err) {
+      console.error('[Manual Offramp] Error creating order:', err);
+      setP2pError(err?.message || 'Failed to create offramp order.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   // ── Submit handler (Offramp / Sell) ──────────────────────────────────────
   const handleSubmit = async () => {
@@ -2870,72 +3081,180 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
         </div>
       )}
 
-      {/* Top Navigation Row with Lime Green TAG Button */}
-      {canTransact && publicKey && !showHistoryView && (
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-          <button
-            type="button"
-            onClick={() => {
-              const nextMode = offrampSubMode === 'standard' ? 'tag' : 'standard';
-              setOfframpSubMode(nextMode);
-              if (nextMode === 'tag') {
-                setShowHistoryView(false);
-                setMode('sell');
-                if (!userTagData && sessionToken) {
-                  setShowTagModal(true);
-                }
-              }
-            }}
-            style={{
-              background: offrampSubMode === 'tag' ? 'var(--lime)' : 'rgba(163, 230, 53, 0.12)',
-              border: '1px solid rgba(163, 230, 53, 0.4)',
-              color: offrampSubMode === 'tag' ? '#0d1f14' : 'var(--lime)',
-              fontSize: '11px',
-              fontWeight: '800',
-              letterSpacing: '0.06em',
-              padding: '4px 14px',
-              borderRadius: '20px',
-              cursor: 'pointer',
-              transition: 'all 0.2s ease',
-              boxShadow: offrampSubMode === 'tag' ? '0 0 12px rgba(163, 230, 53, 0.4)' : 'none',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}
-          >
-            <span>TAG</span>
-            {userTagData && <span style={{ fontSize: '9.5px', opacity: 0.9 }}>({userTagData.tag_name})</span>}
-          </button>
-
-          {offrampSubMode === 'tag' && (
+      {/* Top Navigation Row: Wallet Connected TAG Button OR Guest Offramp Mode Button */}
+      {!showHistoryView && (
+        publicKey && canTransact ? (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
             <button
               type="button"
               onClick={() => {
-                if (userTagData) {
-                  setTagModalInput(userTagData.tag_name || '');
-                  setTagModalBank(userTagData.bank_name || 'Choose Bank');
-                  setTagModalAcctNumber(userTagData.account_number || '');
-                  setTagModalAcctName(userTagData.account_name || '');
-                }
-                if (sessionToken) {
-                  setShowTagModal(true);
+                const nextMode = offrampSubMode === 'standard' ? 'tag' : 'standard';
+                setOfframpSubMode(nextMode);
+                if (nextMode === 'tag') {
+                  setShowHistoryView(false);
+                  setMode('sell');
+                  if (!userTagData && sessionToken) {
+                    setShowTagModal(true);
+                  }
                 }
               }}
               style={{
-                background: 'rgba(255, 255, 255, 0.06)',
-                border: '1px solid rgba(255, 255, 255, 0.15)',
-                color: 'white',
+                background: offrampSubMode === 'tag' ? 'var(--lime)' : 'rgba(163, 230, 53, 0.12)',
+                border: '1px solid rgba(163, 230, 53, 0.4)',
+                color: offrampSubMode === 'tag' ? '#0d1f14' : 'var(--lime)',
                 fontSize: '11px',
-                fontWeight: '600',
-                padding: '4px 12px',
-                borderRadius: '14px',
-                cursor: 'pointer'
+                fontWeight: '800',
+                letterSpacing: '0.06em',
+                padding: '4px 14px',
+                borderRadius: '20px',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                boxShadow: offrampSubMode === 'tag' ? '0 0 12px rgba(163, 230, 53, 0.4)' : 'none',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
               }}
             >
-              My Tag
+              <span>TAG</span>
+              {userTagData && <span style={{ fontSize: '9.5px', opacity: 0.9 }}>({userTagData.tag_name})</span>}
             </button>
-          )}
-        </div>
+
+            {offrampSubMode === 'tag' && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (userTagData) {
+                    setTagModalInput(userTagData.tag_name || '');
+                    setTagModalBank(userTagData.bank_name || 'Choose Bank');
+                    setTagModalAcctNumber(userTagData.account_number || '');
+                    setTagModalAcctName(userTagData.account_name || '');
+                  }
+                  if (sessionToken) {
+                    setShowTagModal(true);
+                  }
+                }}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.06)',
+                  border: '1px solid rgba(255, 255, 255, 0.15)',
+                  color: 'white',
+                  fontSize: '11px',
+                  fontWeight: '600',
+                  padding: '4px 12px',
+                  borderRadius: '14px',
+                  cursor: 'pointer'
+                }}
+              >
+                My Tag
+              </button>
+            )}
+          </div>
+        ) : !publicKey ? (
+          isManualOfframp ? (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsManualOfframp(false);
+                  setOfframpSubMode('standard');
+                }}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.06)',
+                  border: '1px solid rgba(255, 255, 255, 0.15)',
+                  color: 'rgba(255, 255, 255, 0.8)',
+                  fontSize: '11px',
+                  fontWeight: '600',
+                  padding: '4px 12px',
+                  borderRadius: '14px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}
+              >
+                <span>←</span>
+                <span>Exit Guest Mode</span>
+              </button>
+
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <div style={{
+                  background: 'var(--lime)',
+                  color: '#0d1f14',
+                  fontSize: '11px',
+                  fontWeight: '800',
+                  letterSpacing: '0.06em',
+                  padding: '4px 12px',
+                  borderRadius: '20px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}>
+                  <span>TAG</span>
+                  {userTagData && <span style={{ fontSize: '9.5px' }}>({userTagData.tag_name})</span>}
+                </div>
+
+                {sessionToken && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (userTagData) {
+                        setTagModalInput(userTagData.tag_name || '');
+                        setTagModalBank(userTagData.bank_name || 'Choose Bank');
+                        setTagModalAcctNumber(userTagData.account_number || '');
+                        setTagModalAcctName(userTagData.account_name || '');
+                        setManualTagModalWallet(userTagData.wallet_address || manualWalletAddress || '');
+                      }
+                      setShowTagModal(true);
+                    }}
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.06)',
+                      border: '1px solid rgba(255, 255, 255, 0.15)',
+                      color: 'white',
+                      fontSize: '11px',
+                      fontWeight: '600',
+                      padding: '4px 12px',
+                      borderRadius: '14px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    My Tag
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div style={{ marginBottom: '14px' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsManualOfframp(true);
+                  setOfframpSubMode('tag');
+                  setMode('sell');
+                }}
+                style={{
+                  width: '100%',
+                  background: 'linear-gradient(135deg, rgba(163, 230, 53, 0.14), rgba(163, 230, 53, 0.04))',
+                  border: '1px solid rgba(163, 230, 53, 0.4)',
+                  color: 'var(--lime)',
+                  fontSize: '12px',
+                  fontWeight: '700',
+                  padding: '10px 14px',
+                  borderRadius: '14px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  transition: 'all 0.2s ease',
+                  boxShadow: '0 2px 10px rgba(0,0,0,0.2)'
+                }}
+              >
+                <span>⚡</span>
+                <span>Offramp Without Connecting Wallet (Guest Mode)</span>
+                <span style={{ fontSize: '13px' }}>→</span>
+              </button>
+            </div>
+          )
+        ) : null
       )}
 
       {/* Title Row with History Icon (or Country selector on TAG page) */}
@@ -3836,7 +4155,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
                   </div>
 
                   {/* Token balance with small MAX button before the quantity */}
-                  {liveSelectedToken.balance != null && (
+                  {!isManualOfframp && publicKey && liveSelectedToken.balance != null && (
                     <div style={{ display: 'flex', alignItems: 'center', fontSize: '12px', color: 'rgba(255, 255, 255, 0.38)', fontWeight: 'normal', fontFamily: 'var(--ff)' }}>
                       <button
                         type="button"
@@ -3942,7 +4261,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
                 ✕ Maximum offramp limit is $5,000.00 worth of {liveSelectedToken.symbol}. Please decrease your amount.
               </div>
             )}
-            {parsedAmt > 0 && offrampExceedsBalance && !offrampBelowMinimum && (
+            {!isManualOfframp && parsedAmt > 0 && offrampExceedsBalance && !offrampBelowMinimum && (
               <div style={{
                 background: 'rgba(239, 68, 68, 0.08)',
                 border: '1px solid rgba(239, 68, 68, 0.2)',
@@ -3958,10 +4277,10 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
               </div>
             )}
 
-            {/* Submit button + Relayer badge */}
+            {/* Submit button */}
             <button
               className="send-btn"
-              onClick={handleSubmit}
+              onClick={isManualOfframp ? handleManualOfframpSubmit : handleSubmit}
               disabled={submitting || !isFormValid}
               style={{ opacity: (submitting || !isFormValid) ? 0.6 : 1, cursor: (submitting || !isFormValid) ? 'not-allowed' : 'pointer' }}
             >
@@ -3971,9 +4290,12 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
                 : (!isLiveRoute || apiError
                   ? 'Payout Gateway Offline'
                   : (amount && Number(amount) > 0 && baseCryptoAmount > 0
-                    ? (offrampInputMode === 'crypto'
-                        ? `SEND ${selectedCountry.symbol}${parsedAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                        : `SEND ${baseCryptoAmount.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 6 })} ${liveSelectedToken.symbol}`
+                    ? (isManualOfframp
+                        ? `SEND ${baseCryptoAmount.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 6 })} USDC`
+                        : (offrampInputMode === 'crypto'
+                            ? `SEND ${selectedCountry.symbol}${parsedAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                            : `SEND ${baseCryptoAmount.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 6 })} ${liveSelectedToken.symbol}`
+                          )
                       )
                     : 'Send'
                   )
@@ -5169,6 +5491,25 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
               </div>
             )}
 
+            {/* Wallet Address Field (Shown in Manual/Guest Mode when wallet is not connected) */}
+            {(!publicKey || isManualOfframp) && (
+              <div className="field" style={{ marginBottom: '14px' }}>
+                <div className="field-label">Your Solana Wallet Address</div>
+                <div className="input-wrap">
+                  <input
+                    type="text"
+                    value={manualTagModalWallet}
+                    onChange={e => setManualTagModalWallet(e.target.value.trim())}
+                    placeholder="Enter Solana wallet address (e.g. 7xK...)"
+                    style={{ fontSize: '13px', fontWeight: '500', fontFamily: 'monospace' }}
+                  />
+                </div>
+                <div style={{ marginTop: '4px', fontSize: '10.5px', color: 'rgba(255,255,255,0.45)' }}>
+                  Used to link your Fiat Tag and verify past transaction history.
+                </div>
+              </div>
+            )}
+
             {/* Tag Name Field */}
             <div className="field" style={{ marginBottom: '14px' }}>
               <div className="field-label">Fiat Tag Name</div>
@@ -5257,6 +5598,326 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
             >
               {tagModalSaving ? 'Saving Tag...' : (userTagData ? 'Update Fiat Tag' : 'Create Fiat Tag')}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Manual / Guest Deposit & Live Tracking Card ── */}
+      {manualOrder && (
+        <div
+          className="p2p-success-overlay"
+          style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(0, 0, 0, 0.92)', backdropFilter: 'blur(10px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 1400, padding: '16px'
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: '#111622',
+              border: '1px solid rgba(163, 230, 53, 0.35)',
+              borderRadius: '24px',
+              padding: '24px 20px',
+              width: '94%',
+              maxWidth: '410px',
+              position: 'relative',
+              boxShadow: '0 25px 60px rgba(0,0,0,0.9), 0 0 35px rgba(163,230,53,0.12)',
+              maxHeight: '92vh',
+              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '14px'
+            }}
+          >
+            {/* Top Close button */}
+            <button
+              onClick={() => {
+                if (manualSocketRef.current) {
+                  try { manualSocketRef.current.disconnect(); } catch {}
+                  manualSocketRef.current = null;
+                }
+                if (manualPollingTimerRef.current) {
+                  clearInterval(manualPollingTimerRef.current);
+                }
+                setManualOrder(null);
+                setManualOrderStatus(null);
+              }}
+              style={{
+                position: 'absolute', top: '16px', right: '16px',
+                background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)',
+                borderRadius: '50%', width: '28px', height: '28px', color: 'rgba(255,255,255,0.7)',
+                cursor: 'pointer', fontSize: '13px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                lineHeight: 1
+              }}
+              title="Close"
+            >✕</button>
+
+            {/* Timer Badge */}
+            <div style={{ display: 'flex', justifyContent: 'center' }}>
+              <div style={{
+                background: manualTimeLeft < 300 ? 'rgba(239, 68, 68, 0.15)' : 'rgba(163, 230, 53, 0.12)',
+                border: manualTimeLeft < 300 ? '1px solid rgba(239, 68, 68, 0.4)' : '1px solid rgba(163, 230, 53, 0.35)',
+                color: manualTimeLeft < 300 ? '#f87171' : 'var(--lime)',
+                padding: '4px 12px',
+                borderRadius: '20px',
+                fontSize: '11px',
+                fontWeight: '700',
+                letterSpacing: '0.04em',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}>
+                <span>⏱️</span>
+                <span>{manualOrderStatus === 'CONFIRMED' ? 'Completed' : manualOrderStatus === 'EXPIRED' ? 'Expired' : `${Math.floor(manualTimeLeft / 60)}:${(manualTimeLeft % 60).toString().padStart(2, '0')} remaining`}</span>
+              </div>
+            </div>
+
+            {/* Header */}
+            <div style={{ textAlign: 'center' }}>
+              <h3 style={{ fontSize: '18px', fontWeight: '800', color: 'white', margin: '0 0 4px 0' }}>
+                {manualOrderStatus === 'CONFIRMED' ? '🎉 Transfer Confirmed' : 'Send USDC Deposit'}
+              </h3>
+              <p style={{ fontSize: '11.5px', color: 'rgba(255,255,255,0.6)', margin: 0, lineHeight: '1.4' }}>
+                {manualOrderStatus === 'CONFIRMED'
+                  ? `₦${manualOrder.fiatText} has been transferred to your bank.`
+                  : `Transfer exactly ${manualOrder.cryptoAmount.toFixed(4)} USDC on the Solana network to deposit.`}
+              </p>
+            </div>
+
+            {/* Amount Box */}
+            <div style={{
+              background: 'rgba(163, 230, 53, 0.07)',
+              border: '1px solid rgba(163, 230, 53, 0.25)',
+              borderRadius: '16px',
+              padding: '12px 14px',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
+            }}>
+              <div>
+                <div style={{ fontSize: '10.5px', color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: '600' }}>
+                  Amount to send
+                </div>
+                <div style={{ fontSize: '20px', fontWeight: '800', color: 'var(--lime)', fontFamily: 'var(--mono)' }}>
+                  {manualOrder.cryptoAmount.toFixed(4)} <span style={{ fontSize: '14px' }}>USDC</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard?.writeText(manualOrder.cryptoAmount.toFixed(4));
+                  setCopiedManualAmt(true);
+                  setTimeout(() => setCopiedManualAmt(false), 1500);
+                }}
+                style={{
+                  background: 'rgba(163, 230, 53, 0.15)',
+                  border: '1px solid rgba(163, 230, 53, 0.35)',
+                  color: 'var(--lime)',
+                  padding: '6px 12px',
+                  borderRadius: '10px',
+                  fontSize: '11.5px',
+                  fontWeight: '700',
+                  cursor: 'pointer'
+                }}
+              >
+                {copiedManualAmt ? 'Copied ✓' : 'Copy'}
+              </button>
+            </div>
+
+            {/* QR Code */}
+            {manualOrderStatus !== 'CONFIRMED' && manualOrderStatus !== 'EXPIRED' && (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+                <div style={{
+                  background: '#ffffff',
+                  padding: '10px',
+                  borderRadius: '16px',
+                  border: '2px solid rgba(163, 230, 53, 0.4)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: '0 4px 20px rgba(0,0,0,0.4)'
+                }}>
+                  <img
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(manualOrder.depositAddress)}`}
+                    alt="Deposit QR"
+                    style={{ width: '140px', height: '140px', display: 'block' }}
+                  />
+                </div>
+                <span style={{ fontSize: '10.5px', color: 'rgba(255,255,255,0.4)' }}>Scan QR or copy address below</span>
+              </div>
+            )}
+
+            {/* Deposit Address Box */}
+            <div style={{
+              background: 'rgba(255,255,255,0.03)',
+              border: '1px solid var(--border)',
+              borderRadius: '14px',
+              padding: '12px'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                <span style={{ fontSize: '10.5px', color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: '600' }}>
+                  Deposit Address (Solana)
+                </span>
+                <span style={{ fontSize: '10px', color: 'var(--lime)', fontWeight: '600' }}>USDC Only</span>
+              </div>
+              <div style={{
+                fontSize: '12px',
+                color: 'white',
+                fontFamily: 'var(--mono)',
+                wordBreak: 'break-all',
+                lineHeight: '1.4',
+                marginBottom: '8px'
+              }}>
+                {manualOrder.depositAddress}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard?.writeText(manualOrder.depositAddress);
+                  setCopiedManualAddr(true);
+                  setTimeout(() => setCopiedManualAddr(false), 1500);
+                }}
+                style={{
+                  width: '100%',
+                  background: 'rgba(255,255,255,0.08)',
+                  border: '1px solid rgba(255,255,255,0.18)',
+                  color: 'white',
+                  padding: '8px',
+                  borderRadius: '10px',
+                  fontSize: '12px',
+                  fontWeight: '700',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px'
+                }}
+              >
+                <span>{copiedManualAddr ? '✓ Address Copied' : '📋 Copy Deposit Address'}</span>
+              </button>
+            </div>
+
+            {/* Live Status Tracker */}
+            <div style={{
+              background: 'rgba(255,255,255,0.02)',
+              border: '1px solid rgba(255,255,255,0.08)',
+              borderRadius: '14px',
+              padding: '12px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px' }}>
+                <span style={{ color: 'rgba(255,255,255,0.5)' }}>Order Status</span>
+                <span style={{
+                  fontWeight: '800',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.04em',
+                  color: manualOrderStatus === 'CONFIRMED' ? 'var(--lime)' : manualOrderStatus === 'FAILED' || manualOrderStatus === 'EXPIRED' ? '#ef4444' : manualOrderStatus === 'PENDING' ? '#60a5fa' : '#eab308'
+                }}>
+                  {manualOrderStatus === 'CONFIRMED' ? '✓ Transfer Confirmed'
+                    : manualOrderStatus === 'FAILED' ? '✕ Failed'
+                    : manualOrderStatus === 'EXPIRED' ? '⏱️ Expired'
+                    : manualOrderStatus === 'PENDING' ? '🔄 Crypto Received'
+                    : '⏳ Awaiting Deposit'}
+                </span>
+              </div>
+
+              <div style={{ fontSize: '11.5px', color: 'rgba(255,255,255,0.7)', lineHeight: '1.4' }}>
+                {manualOrderStatus === 'CONFIRMED'
+                  ? 'Payment successful! Funds have been sent to your bank.'
+                  : manualOrderStatus === 'PENDING'
+                  ? 'Crypto deposit detected on Solana! PajCash is now processing the payout to your bank account.'
+                  : manualOrderStatus === 'EXPIRED'
+                  ? 'The 30-minute deposit window has expired. Please cancel and create a fresh order.'
+                  : 'Waiting for you to transfer USDC to the address above. This card will update live once detected.'}
+              </div>
+            </div>
+
+            {/* Bank Payout Summary */}
+            <div style={{
+              background: 'rgba(255,255,255,0.02)',
+              border: '1px solid rgba(255,255,255,0.06)',
+              borderRadius: '14px',
+              padding: '12px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '6px',
+              fontSize: '11.5px'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'rgba(255,255,255,0.5)' }}>Recipient Tag</span>
+                <span style={{ color: 'var(--lime)', fontWeight: '700' }}>{manualOrder.recipientTag || 'My Tag'}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'rgba(255,255,255,0.5)' }}>Bank Name</span>
+                <span style={{ color: 'white', fontWeight: '600' }}>{manualOrder.bankName}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'rgba(255,255,255,0.5)' }}>Account Number</span>
+                <span style={{ color: 'white', fontWeight: '600', fontFamily: 'monospace' }}>{manualOrder.accountNumber}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'rgba(255,255,255,0.5)' }}>Account Name</span>
+                <span style={{ color: 'white', fontWeight: '600' }}>{manualOrder.accountName}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '6px', marginTop: '2px' }}>
+                <span style={{ color: 'rgba(255,255,255,0.5)' }}>You Receive</span>
+                <span style={{ color: 'white', fontWeight: '800', fontSize: '13px' }}>₦{manualOrder.fiatText}</span>
+              </div>
+            </div>
+
+            {/* Bottom Actions */}
+            {manualOrderStatus === 'CONFIRMED' ? (
+              <button
+                type="button"
+                className="send-btn"
+                onClick={() => {
+                  if (manualSocketRef.current) {
+                    try { manualSocketRef.current.disconnect(); } catch {}
+                    manualSocketRef.current = null;
+                  }
+                  if (manualPollingTimerRef.current) {
+                    clearInterval(manualPollingTimerRef.current);
+                  }
+                  setManualOrder(null);
+                  setManualOrderStatus(null);
+                  setAmount('');
+                }}
+              >
+                🎉 Done — Start New Transfer
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  if (manualSocketRef.current) {
+                    try { manualSocketRef.current.disconnect(); } catch {}
+                    manualSocketRef.current = null;
+                  }
+                  if (manualPollingTimerRef.current) {
+                    clearInterval(manualPollingTimerRef.current);
+                  }
+                  setManualOrder(null);
+                  setManualOrderStatus(null);
+                }}
+                style={{
+                  width: '100%',
+                  background: 'rgba(239, 68, 68, 0.1)',
+                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                  color: '#f87171',
+                  padding: '10px',
+                  borderRadius: '12px',
+                  fontSize: '12px',
+                  fontWeight: '700',
+                  cursor: 'pointer'
+                }}
+              >
+                Cancel Order
+              </button>
+            )}
           </div>
         </div>
       )}
