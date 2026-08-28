@@ -1547,6 +1547,11 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
       if (!publicKey) {
         localStorage.setItem('paj_manual_wallet', effectiveWallet);
         setManualWalletAddress(effectiveWallet);
+        // Save session to paj_sessions table now that we have the wallet address
+        if (sessionToken) {
+          const expiryMs = Date.now() + 20 * 365 * 24 * 60 * 60 * 1000;
+          saveSession(effectiveWallet, sessionEmail || emailInput?.trim() || '', sessionToken, expiryMs);
+        }
       }
 
       setUserTagData(registered);
@@ -1632,6 +1637,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
 
           const storedWallet = localStorage.getItem('paj_manual_wallet');
           if (storedWallet) {
+            saveSession(storedWallet, emailInput.trim(), res.token, expiryMs);
             getFiatTagByWallet(storedWallet).then(tag => {
               if (tag) {
                 setUserTagData(tag);
