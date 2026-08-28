@@ -463,6 +463,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
   const [manualTimeLeft, setManualTimeLeft] = useState(1800); // 30 mins (1800 seconds)
   const [copiedManualAddr, setCopiedManualAddr] = useState(false);
   const [copiedManualAmt, setCopiedManualAmt] = useState(false);
+  const [manualConfirmCard, setManualConfirmCard] = useState(null); // { fiatAmount, cryptoAmount, recipientTag, date, txSignature }
   const manualSocketRef = useRef(null);
   const manualPollingTimerRef = useRef(null);
 
@@ -2542,18 +2543,38 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
         manualSocketRef.current = null;
       }
 
+      // Helper to trigger confirmation card
+      const triggerConfirm = (txSig) => {
+        updateP2PTransactionStatus(order.id, 'CONFIRMED', txSig || null);
+        setManualConfirmCard({
+          fiatAmount: parsedAmt,
+          fiatText: fiatAmountText,
+          cryptoAmount: baseCryptoAmount,
+          recipientTag: recipientTagInput || (resolvedTagData?.tag_name) || null,
+          date: new Date(),
+          txSignature: txSig || null,
+          bankName: effectiveBankName,
+          accountName: effectiveAcctName,
+        });
+        setManualOrder(null);
+        setManualOrderStatus(null);
+        if (manualSocketRef.current) {
+          try { manualSocketRef.current.disconnect(); } catch {}
+          manualSocketRef.current = null;
+        }
+        if (manualPollingTimerRef.current) {
+          clearInterval(manualPollingTimerRef.current);
+        }
+      };
+
       // Start live observer for incoming deposit and payout
       const observer = observeOrder({
         orderId: order.id,
         onOrderUpdate: (data) => {
           const newStatus = (data?.status || '').toUpperCase();
           if (newStatus === 'COMPLETED' || newStatus === 'SUCCESSFUL' || newStatus === 'CONFIRMED') {
-            updateP2PTransactionStatus(order.id, newStatus, null);
-            setManualOrderStatus('CONFIRMED');
-            if (manualSocketRef.current) {
-              try { manualSocketRef.current.disconnect(); } catch {}
-              manualSocketRef.current = null;
-            }
+            const txSig = data?.txHash || data?.signature || data?.transactionHash || null;
+            triggerConfirm(txSig);
           } else if (newStatus === 'FAILED') {
             updateP2PTransactionStatus(order.id, 'FAILED', null);
             setManualOrderStatus('FAILED');
@@ -2572,12 +2593,13 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
           const res = await getTransaction(order.id, sessionToken);
           const st = (res?.status || '').toUpperCase();
           if (st === 'COMPLETED' || st === 'SUCCESSFUL' || st === 'CONFIRMED') {
-            setManualOrderStatus('CONFIRMED');
-            updateP2PTransactionStatus(order.id, st, null);
+            const txSig = res?.txHash || res?.signature || res?.transactionHash || null;
+            triggerConfirm(txSig);
             clearInterval(manualPollingTimerRef.current);
           } else if (st === 'PAID' || st === 'PENDING' || st === 'PROCESSING') {
             setManualOrderStatus('PENDING');
           } else if (st === 'FAILED') {
+            updateP2PTransactionStatus(order.id, 'FAILED', null);
             setManualOrderStatus('FAILED');
             clearInterval(manualPollingTimerRef.current);
           }
@@ -5950,6 +5972,134 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
                 Cancel Order
               </button>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Guest Offramp Clean Confirmation Card ── */}
+      {manualConfirmCard && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.88)', backdropFilter: 'blur(12px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 1500, padding: '16px',
+          animation: 'fadeInBackdrop 0.25s ease'
+        }}>
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: 'linear-gradient(160deg, #111b2e 0%, #0d1520 100%)',
+              border: '1px solid rgba(163, 230, 53, 0.25)',
+              borderRadius: '24px',
+              padding: '32px 24px 24px',
+              width: '92%',
+              maxWidth: '390px',
+              boxShadow: '0 30px 80px rgba(0,0,0,0.9), 0 0 40px rgba(163,230,53,0.08)',
+              animation: 'slideUpCard 0.3s ease',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0px'
+            }}
+          >
+            {/* Green checkmark */}
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '18px' }}>
+              <div style={{
+                width: '60px', height: '60px', borderRadius: '50%',
+                background: 'rgba(34,197,94,0.15)',
+                border: '2.5px solid #22c55e',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 0 20px rgba(34,197,94,0.25)'
+              }}>
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+              </div>
+            </div>
+
+            {/* Title + Amounts */}
+            <div style={{ textAlign: 'center', marginBottom: '4px' }}>
+              <div style={{ fontSize: '11px', fontWeight: '700', color: 'rgba(255,255,255,0.5)', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: '8px' }}>
+                Transfer Confirmed
+              </div>
+              <div style={{ fontSize: '40px', fontWeight: '800', color: 'white', letterSpacing: '-0.02em', lineHeight: 1.1 }}>
+                ₦{Number(manualConfirmCard.fiatAmount).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+              </div>
+              <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.45)', marginTop: '4px' }}>
+                ≈ {manualConfirmCard.cryptoAmount.toFixed(4)} USDC
+              </div>
+            </div>
+
+            {/* Divider */}
+            <div style={{ height: '1px', background: 'rgba(255,255,255,0.07)', margin: '20px 0' }} />
+
+            {/* Detail rows */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '24px' }}>
+              {manualConfirmCard.recipientTag && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
+                  <span style={{ color: 'rgba(255,255,255,0.45)' }}>Recipient Tag</span>
+                  <span style={{ color: 'var(--lime)', fontWeight: '700' }}>
+                    {manualConfirmCard.recipientTag.startsWith('$') ? manualConfirmCard.recipientTag : `$${manualConfirmCard.recipientTag}`}
+                  </span>
+                </div>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
+                <span style={{ color: 'rgba(255,255,255,0.45)' }}>Date</span>
+                <span style={{ color: 'white', fontWeight: '600' }}>
+                  {manualConfirmCard.date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} · {manualConfirmCard.date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
+                <span style={{ color: 'rgba(255,255,255,0.45)' }}>Status</span>
+                <span style={{ color: '#22c55e', fontWeight: '700' }}>Confirmed</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
+                <span style={{ color: 'rgba(255,255,255,0.45)' }}>Sender</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <div style={{
+                    width: '20px', height: '20px', borderRadius: '50%',
+                    background: 'rgba(255,255,255,0.1)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: '10px', fontWeight: '700', color: 'white',
+                    border: '1px solid rgba(255,255,255,0.15)'
+                  }}>P</div>
+                  <span style={{ color: 'white', fontWeight: '600' }}>Paj Cash</span>
+                </div>
+              </div>
+              {manualConfirmCard.txSignature && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
+                  <span style={{ color: 'rgba(255,255,255,0.45)' }}>Tx Signature</span>
+                  <a
+                    href={`https://solscan.io/tx/${manualConfirmCard.txSignature}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: 'var(--lime)', fontWeight: '600', fontFamily: 'monospace', fontSize: '12px', textDecoration: 'none' }}
+                  >
+                    {manualConfirmCard.txSignature.slice(0, 10)}…
+                  </a>
+                </div>
+              )}
+            </div>
+
+            {/* Done button */}
+            <button
+              onClick={() => {
+                setManualConfirmCard(null);
+                setAmount('');
+              }}
+              style={{
+                width: '100%', padding: '14px',
+                background: 'linear-gradient(135deg, #65a30d, #84cc16)',
+                border: 'none', borderRadius: '14px',
+                color: '#0d1f14', fontWeight: '800', fontSize: '15px',
+                cursor: 'pointer', letterSpacing: '0.02em',
+                boxShadow: '0 4px 18px rgba(132,204,22,0.35)',
+                transition: 'opacity 0.15s',
+              }}
+              onMouseEnter={e => e.target.style.opacity = '0.85'}
+              onMouseLeave={e => e.target.style.opacity = '1'}
+            >
+              Done
+            </button>
           </div>
         </div>
       )}
