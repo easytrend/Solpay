@@ -1073,7 +1073,8 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
       });
 
       // 3. If live session token exists, sync latest status from PajCash API
-      // Update existing orders and backfill missing historical orders for this session.
+      // ONLY update existing orders belonging to this wallet address.
+      // Do NOT add unmatched API orders, as PajCash returns global platform orders.
       if (sessionToken) {
         try {
           const res = await getTransactionHistory(sessionToken);
@@ -1096,28 +1097,6 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
                   bankName: apiTx.bankName || apiTx.bank_name || existing.bankName,
                   accountNumber: apiTx.accountNumber || apiTx.account_number || existing.accountNumber,
                   accountName: apiTx.accountName || apiTx.account_name || existing.accountName,
-                });
-              } else if (apiId && walletKey) {
-                // Historical order for this user/session that was missing from Supabase! Add to map so syncP2PTransactionStatuses backfills it.
-                txMap.set(apiId, {
-                  id: apiId,
-                  orderId: apiId,
-                  signature: apiSig || null,
-                  userAddress: walletKey,
-                  type: apiTx.type || apiTx.transaction_type || (apiTx.depositAddress || apiTx.deposit_address ? 'offramp' : 'onramp'),
-                  tokenSymbol: apiTx.tokenSymbol || apiTx.token_symbol || 'USDC',
-                  cryptoAmount: parseFloat(apiTx.cryptoAmount || apiTx.amount || apiTx.crypto_amount) || 0,
-                  fiatAmount: parseFloat(apiTx.fiatAmount || apiTx.fiat_amount) || 0,
-                  fiatCurrency: apiTx.fiatCurrency || apiTx.fiat_currency || 'NGN',
-                  usdValue: parseFloat(apiTx.usdValue || apiTx.usd_value) || 0,
-                  status: apiTx.status || 'PENDING',
-                  bankName: apiTx.bankName || apiTx.bank_name || apiTx.bank || null,
-                  accountNumber: apiTx.accountNumber || apiTx.account_number || apiTx.account || null,
-                  accountName: apiTx.accountName || apiTx.account_name || apiTx.name || null,
-                  recipientTag: apiTx.recipientTag || apiTx.recipient_tag || null,
-                  depositAddress: apiTx.depositAddress || apiTx.deposit_address || apiTx.address || null,
-                  userEmail: sessionEmail || apiTx.userEmail || apiTx.email || null,
-                  createdAt: apiTx.createdAt || apiTx.created_at || new Date().toISOString(),
                 });
               }
             });
