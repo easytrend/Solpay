@@ -2522,7 +2522,9 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
 
       const effectiveUserWallet = manualWalletAddress || (resolvedTagData?.wallet_address) || 'guest_manual';
 
-      const actualCryptoAmount = order.amount || estCryptoAmount;
+      const actualCryptoAmount = order.amount !== undefined && order.amount !== null
+        ? Number(order.amount)
+        : estCryptoAmount;
 
       // Log transaction to Supabase under the manual wallet address
       logP2PTransaction({
@@ -2595,31 +2597,31 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
           if (newStatus === 'COMPLETED' || newStatus === 'SUCCESSFUL' || newStatus === 'CONFIRMED') {
             const txSig = data?.txHash || data?.signature || data?.transactionHash || null;
             triggerConfirm(txSig);
-          } else if (newStatus === 'FAILED') {
+          } else if (newStatus === 'FAILED' || newStatus === 'CANCELLED' || newStatus === 'EXPIRED') {
             updateP2PTransactionStatus(order.id, 'ERROR', null);
             setManualOrderStatus('FAILED');
           } else if (newStatus === 'PAID' || newStatus === 'PENDING' || newStatus === 'PROCESSING') {
             updateP2PTransactionStatus(order.id, 'PENDING', null);
             setManualOrderStatus('PENDING');
           }
+        },
+        onError: (err) => {
+          console.warn('[Manual Offramp] WebSocket error:', err);
         }
       });
       manualSocketRef.current = observer;
+      observer.connect().catch(() => { /* WebSocket fallback to polling */ });
 
-      // Start fallback interval polling
+      // Start fallback interval polling with correct argument order (sessionToken, orderId)
       if (manualPollingTimerRef.current) clearInterval(manualPollingTimerRef.current);
       manualPollingTimerRef.current = setInterval(async () => {
         try {
-          const res = await getTransaction(order.id, sessionToken);
-          const st = (res?.status || '').toUpperCase();
-          // PajCash statuses → Supabase statuses:
-          // COMPLETED | SUCCESSFUL | CONFIRMED → COMPLETED
-          // PAID | PENDING | PROCESSING        → PENDING
-          // FAILED | CANCELLED | EXPIRED       → ERROR
+          const res = await getTransaction(sessionToken, order.id);
+          const data = res?.data || res;
+          const st = (data?.status || '').toUpperCase();
           if (st === 'COMPLETED' || st === 'SUCCESSFUL' || st === 'CONFIRMED') {
-            const txSig = res?.txHash || res?.signature || res?.transactionHash || null;
+            const txSig = data?.txHash || data?.signature || data?.transactionHash || null;
             triggerConfirm(txSig);
-            clearInterval(manualPollingTimerRef.current);
           } else if (st === 'PAID' || st === 'PENDING' || st === 'PROCESSING') {
             updateP2PTransactionStatus(order.id, 'PENDING', null);
             setManualOrderStatus('PENDING');
@@ -2628,8 +2630,10 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
             setManualOrderStatus('FAILED');
             clearInterval(manualPollingTimerRef.current);
           }
-        } catch {}
-      }, 8000);
+        } catch (pollErr) {
+          console.warn('[Manual Offramp] Polling notice:', pollErr);
+        }
+      }, 5000);
 
     } catch (err) {
       console.error('[Manual Offramp] Error creating order:', err);
@@ -5756,12 +5760,12 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
             {/* Header */}
             <div style={{ textAlign: 'center' }}>
               <h3 style={{ fontSize: '18px', fontWeight: '800', color: 'white', margin: '0 0 4px 0' }}>
-                {manualOrderStatus === 'CONFIRMED' ? '🎉 Transfer Confirmed' : 'Send USDC Deposit'}
+                {manualOrderStatus === 'CONFIRMED' ? 'Transfer Confirmed' : 'Send USDC Deposit'}
               </h3>
               <p style={{ fontSize: '11.5px', color: 'rgba(255,255,255,0.6)', margin: 0, lineHeight: '1.4' }}>
                 {manualOrderStatus === 'CONFIRMED'
                   ? `₦${manualOrder.fiatText} has been transferred to your bank.`
-                  : `Transfer exactly ${manualOrder.cryptoAmount.toFixed(4)} USDC on the Solana network to deposit.`}
+                  : `Transfer exactly ${Number(Number(manualOrder.cryptoAmount).toFixed(6))} USDC on the Solana network to deposit.`}
               </p>
             </div>
 
@@ -5780,13 +5784,13 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
                   Amount to send
                 </div>
                 <div style={{ fontSize: '20px', fontWeight: '800', color: 'var(--lime)', fontFamily: 'var(--mono)' }}>
-                  {manualOrder.cryptoAmount.toFixed(4)} <span style={{ fontSize: '14px' }}>USDC</span>
+                  {Number(Number(manualOrder.cryptoAmount).toFixed(6))} <span style={{ fontSize: '14px' }}>USDC</span>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => {
-                  navigator.clipboard?.writeText(manualOrder.cryptoAmount.toFixed(4));
+                  navigator.clipboard?.writeText(String(manualOrder.cryptoAmount));
                   setCopiedManualAmt(true);
                   setTimeout(() => setCopiedManualAmt(false), 1500);
                 }}
@@ -6050,7 +6054,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
                 ₦{Number(manualConfirmCard.fiatAmount).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
               </div>
               <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.45)', marginTop: '4px' }}>
-                ≈ {manualConfirmCard.cryptoAmount.toFixed(4)} USDC
+                ≈ {Number(Number(manualConfirmCard.cryptoAmount).toFixed(6))} USDC
               </div>
             </div>
 
