@@ -35,6 +35,19 @@ export async function logTransaction({ signature, userAddress, type, symbol, tok
 }
 
 /**
+ * Strict status normalizer for Supabase p2p_transactions table.
+ * Strictly guarantees status is only one of: 'INIT', 'PENDING', 'COMPLETED', 'ERROR'.
+ */
+export function normalizeSupabaseStatus(rawStatus) {
+  if (!rawStatus) return 'PENDING';
+  const s = String(rawStatus).toUpperCase().trim();
+  if (['COMPLETED', 'SUCCESSFUL', 'CONFIRMED', 'FORWARDED_SUCCESS', 'DONE'].includes(s)) return 'COMPLETED';
+  if (['FAILED', 'ERROR', 'CANCELLED', 'EXPIRED', 'REJECTED'].includes(s)) return 'ERROR';
+  if (['INIT', 'INITIALIZED', 'WAITING'].includes(s)) return 'INIT';
+  return 'PENDING'; // PAID, PENDING, PROCESSING, SWAPPING, FORWARDING, etc.
+}
+
+/**
  * Log a live P2P transaction (onramp or offramp) with full metadata.
  */
 export async function logP2PTransaction({
@@ -66,13 +79,13 @@ export async function logP2PTransaction({
     transaction_type: type,
     token_symbol: tokenSymbol,
     crypto_amount: parseFloat(cryptoAmount) || 0,
-    fiat_currency: fiatCurrency,
+    fiat_currency: fiatCurrency || 'NGN',
     fiat_amount: parseFloat(fiatAmount) || 0,
     usd_value: parseFloat(usdValue) || 0,
     bank_name: bankName || null,
     account_number: accountNumber || null,
     account_name: accountName || null,
-    status: status || 'INIT',
+    status: normalizeSupabaseStatus(status),
     user_email: userEmail || null,
     deposit_address: depositAddress || null,
     recipient_tag: recipientTag || null,
@@ -152,10 +165,14 @@ export async function updateP2PTransactionStatus(orderId, status, signature = nu
       return; // Do not overwrite relayer forward status
     }
 
-    const patch = { status: status.toUpperCase(), updated_at: new Date().toISOString() };
+    const patch = { updated_at: new Date().toISOString() };
+    if (status) {
+      patch.status = normalizeSupabaseStatus(status);
+    }
     if (signature) {
       patch.signature = signature;
     }
+
     const { error } = await supabase
       .from('p2p_transactions')
       .update(patch)
@@ -179,41 +196,50 @@ export async function syncP2PTransactionStatuses(orders = [], walletAddress = nu
       if (!orderId) continue;
 
       const rawStatus = order.status || order.state || 'PENDING';
-      const status = String(rawStatus).toUpperCase();
-      const signature = order.signature || order.sig || order.txSignature || order.tx_hash || null;
+      const status = normalizeSupabaseStatus(rawStatus);
+      const signature = order.signature || order.sig || order.txSignature || order.tx_hash || order.txHash || null;
       const userAddr = order.userAddress || order.user_address || walletAddress || null;
 
       // Check if order already exists in Supabase
       const { data: existing } = await supabase
         .from('p2p_transactions')
-        .select('id, status')
+        .select('id, status, signature')
         .eq('order_id', orderId)
         .maybeSingle();
 
       if (existing) {
-        // Update status if it changed
+        // Update status or signature if it changed
+        const patch = {};
         if (existing.status !== 'FORWARDED_SUCCESS' && existing.status !== status) {
-          const patch = { status, updated_at: new Date().toISOString() };
-          if (signature) patch.signature = signature;
+          patch.status = status;
+        }
+        if (signature && (!existing.signature || existing.signature.startsWith('pending_')) && signature !== existing.signature) {
+          patch.signature = signature;
+        }
+        if (Object.keys(patch).length > 0) {
+          patch.updated_at = new Date().toISOString();
           await supabase.from('p2p_transactions').update(patch).eq('order_id', orderId);
         }
       } else if (userAddr) {
         // Order is missing from Supabase! Auto-backfill/insert it now.
+        const txType = order.type || order.transaction_type || (order.depositAddress || order.deposit_address ? 'p2p_offramp' : 'p2p_onramp');
         const payload = {
           order_id: orderId,
-          signature: signature || `pending_offramp_${orderId}`,
+          signature: signature || `pending_${txType}_${orderId}`,
           user_address: userAddr,
-          transaction_type: order.type || order.transaction_type || 'offramp',
+          transaction_type: txType,
           token_symbol: order.tokenSymbol || order.token_symbol || 'USDC',
-          crypto_amount: parseFloat(order.cryptoAmount || order.amount) || 0,
+          crypto_amount: parseFloat(order.cryptoAmount || order.amount || order.crypto_amount) || 0,
           fiat_currency: order.fiatCurrency || order.fiat_currency || 'NGN',
           fiat_amount: parseFloat(order.fiatAmount || order.fiat_amount) || 0,
           usd_value: parseFloat(order.usdValue || order.usd_value) || 0,
-          bank_name: order.bankName || order.bank || null,
-          account_number: order.accountNumber || order.account || null,
-          account_name: order.accountName || order.name || null,
+          bank_name: order.bankName || order.bank_name || order.bank || null,
+          account_number: order.accountNumber || order.account_number || order.account || null,
+          account_name: order.accountName || order.account_name || order.name || null,
           recipient_tag: order.recipientTag || order.recipient_tag || null,
           status,
+          user_email: order.userEmail || order.user_email || order.email || null,
+          deposit_address: order.depositAddress || order.deposit_address || order.address || null,
           updated_at: new Date().toISOString(),
         };
 

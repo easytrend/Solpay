@@ -1006,20 +1006,20 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
 
   // ── Load payout history (Permanent Supabase History + PajCash Live Sync) ──
   const loadPayoutLogs = async () => {
-    if (!publicKey) return;
+    const walletKey = (publicKey ? publicKey.toBase58() : manualWalletAddress) || localStorage.getItem('paj_manual_wallet');
+    if (!walletKey && !sessionToken) return;
     setLoadingLogs(true);
     setLogError(null);
     try {
-      const walletKey = publicKey.toBase58();
-
       // 1. Fetch user's permanent transaction history from Supabase
-      const supabaseTxs = await getP2PTransactionsByUser(walletKey);
+      const supabaseTxs = walletKey ? await getP2PTransactionsByUser(walletKey) : [];
 
       // Map Supabase rows to standard UI fields
       const formattedSupabaseTxs = supabaseTxs.map(row => ({
         id: row.order_id || row.id,
         orderId: row.order_id,
         signature: row.signature,
+        userAddress: row.user_address,
         type: row.transaction_type || 'offramp',
         tokenSymbol: row.token_symbol || 'USDC',
         cryptoAmount: row.crypto_amount,
@@ -1045,6 +1045,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
 
       // 2. Also check local storage for any pending unconfirmed orders
       const localOrders = (() => {
+        if (!walletKey) return [];
         try { return JSON.parse(localStorage.getItem(`paj_user_orders_${walletKey}`) || '[]'); }
         catch { return []; }
       })();
@@ -1054,6 +1055,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
           txMap.set(id, {
             id,
             signature: o.sig || null,
+            userAddress: walletKey,
             type: o.type || 'offramp',
             tokenSymbol: o.tokenSymbol || 'USDC',
             cryptoAmount: o.cryptoAmount || o.amount || 0,
@@ -1071,8 +1073,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
       });
 
       // 3. If live session token exists, sync latest status from PajCash API
-      // ONLY update existing orders belonging to this wallet address.
-      // Do NOT add unmatched API orders, as PajCash returns global platform orders.
+      // Update existing orders and backfill missing historical orders for this session.
       if (sessionToken) {
         try {
           const res = await getTransactionHistory(sessionToken);
@@ -1091,9 +1092,32 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
                 txMap.set(matchKey, {
                   ...existing,
                   status: apiTx.status || existing.status,
+                  signature: apiSig || existing.signature,
                   bankName: apiTx.bankName || apiTx.bank_name || existing.bankName,
                   accountNumber: apiTx.accountNumber || apiTx.account_number || existing.accountNumber,
                   accountName: apiTx.accountName || apiTx.account_name || existing.accountName,
+                });
+              } else if (apiId && walletKey) {
+                // Historical order for this user/session that was missing from Supabase! Add to map so syncP2PTransactionStatuses backfills it.
+                txMap.set(apiId, {
+                  id: apiId,
+                  orderId: apiId,
+                  signature: apiSig || null,
+                  userAddress: walletKey,
+                  type: apiTx.type || apiTx.transaction_type || (apiTx.depositAddress || apiTx.deposit_address ? 'offramp' : 'onramp'),
+                  tokenSymbol: apiTx.tokenSymbol || apiTx.token_symbol || 'USDC',
+                  cryptoAmount: parseFloat(apiTx.cryptoAmount || apiTx.amount || apiTx.crypto_amount) || 0,
+                  fiatAmount: parseFloat(apiTx.fiatAmount || apiTx.fiat_amount) || 0,
+                  fiatCurrency: apiTx.fiatCurrency || apiTx.fiat_currency || 'NGN',
+                  usdValue: parseFloat(apiTx.usdValue || apiTx.usd_value) || 0,
+                  status: apiTx.status || 'PENDING',
+                  bankName: apiTx.bankName || apiTx.bank_name || apiTx.bank || null,
+                  accountNumber: apiTx.accountNumber || apiTx.account_number || apiTx.account || null,
+                  accountName: apiTx.accountName || apiTx.account_name || apiTx.name || null,
+                  recipientTag: apiTx.recipientTag || apiTx.recipient_tag || null,
+                  depositAddress: apiTx.depositAddress || apiTx.deposit_address || apiTx.address || null,
+                  userEmail: sessionEmail || apiTx.userEmail || apiTx.email || null,
+                  createdAt: apiTx.createdAt || apiTx.created_at || new Date().toISOString(),
                 });
               }
             });
@@ -1106,7 +1130,9 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
       const allMergedTxs = Array.from(txMap.values());
       allMergedTxs.sort((a, b) => new Date(b.createdAt || b.created_at || 0) - new Date(a.createdAt || a.created_at || 0));
 
-      syncP2PTransactionStatuses(allMergedTxs, walletKey);
+      if (walletKey) {
+        syncP2PTransactionStatuses(allMergedTxs, walletKey);
+      }
       setPayoutLogs(allMergedTxs);
     } catch (e) {
       console.warn('Could not load payout history:', e);
@@ -2112,10 +2138,12 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
         onOrderUpdate: async (data) => {
           const status = (data?.status || '').toUpperCase();
           
-          // Only update database status if it is not already in a terminal state
           if (onrampStatus !== 'completed' && onrampStatus !== 'forwarded_success' && onrampStatus !== 'failed') {
             setOnrampStatus(status.toLowerCase());
-            updateP2PTransactionStatus(order.id, data?.txHash || data?.signature, null);
+            const mappedStatus = (status === 'COMPLETED' || status === 'SUCCESSFUL' || status === 'CONFIRMED') ? 'COMPLETED'
+              : (status === 'FAILED' || status === 'CANCELLED' || status === 'EXPIRED') ? 'ERROR'
+              : 'PENDING';
+            updateP2PTransactionStatus(order.id, mappedStatus, data?.txHash || data?.signature || null);
           }
 
           const orderSuccess = status === 'COMPLETED' || status === 'SUCCESSFUL' || status === 'CONFIRMED';
@@ -2407,8 +2435,11 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
           
           if (status && status !== currentStatus) {
             setOnrampStatus(status.toLowerCase());
-            // ✅ Sync status back to Supabase (always uppercase for consistency)
-            updateP2PTransactionStatus(onrampOrder.id, data.txHash || data.signature, null);
+            // ✅ Sync status back to Supabase (always canonical status)
+            const mappedStatus = (status === 'COMPLETED' || status === 'SUCCESSFUL' || status === 'CONFIRMED') ? 'COMPLETED'
+              : (status === 'FAILED' || status === 'CANCELLED' || status === 'EXPIRED') ? 'ERROR'
+              : 'PENDING';
+            updateP2PTransactionStatus(onrampOrder.id, mappedStatus, data?.txHash || data?.signature || null);
             
             const orderSuccess = status === 'COMPLETED' || status === 'SUCCESSFUL' || status === 'CONFIRMED';
             if (orderSuccess) {
@@ -2448,7 +2479,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
           
           if (status && status !== currentStatus) {
             if (status === 'COMPLETED' || status === 'SUCCESSFUL' || status === 'CONFIRMED') {
-              updateP2PTransactionStatus(successDetails.orderId, null, null);
+              updateP2PTransactionStatus(successDetails.orderId, 'COMPLETED', data?.txHash || data?.signature || null);
               setSuccessDetails(prev => prev ? { ...prev, status } : prev);
               loadPayoutLogs();
             } else if (status === 'FAILED') {
@@ -2981,7 +3012,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
           const newStatus = (data?.status || '').toUpperCase();
           if (newStatus === 'COMPLETED' || newStatus === 'SUCCESSFUL' || newStatus === 'CONFIRMED') {
             // ✅ Write final status to Supabase immediately
-            updateP2PTransactionStatus(order.id, null, null);
+            updateP2PTransactionStatus(order.id, 'COMPLETED', data?.txHash || data?.signature || null);
             // Update modal to show TRANSFER CONFIRMED
             setSuccessDetails(prev => prev ? { ...prev, status: newStatus } : prev);
             loadPayoutLogs();
