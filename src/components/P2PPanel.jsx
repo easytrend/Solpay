@@ -5919,7 +5919,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
               </div>
             </div>
 
-            {/* Bank Payout Summary */}
+            {/* Payout Summary (privacy mode — no bank details shown) */}
             <div style={{
               background: 'rgba(255,255,255,0.02)',
               border: '1px solid rgba(255,255,255,0.06)',
@@ -5931,20 +5931,12 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
               fontSize: '11.5px'
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'rgba(255,255,255,0.5)' }}>Recipient Tag</span>
-                <span style={{ color: 'var(--lime)', fontWeight: '700' }}>{manualOrder.recipientTag || 'My Tag'}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'rgba(255,255,255,0.5)' }}>Bank Name</span>
-                <span style={{ color: 'white', fontWeight: '600' }}>{manualOrder.bankName}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'rgba(255,255,255,0.5)' }}>Account Number</span>
-                <span style={{ color: 'white', fontWeight: '600', fontFamily: 'monospace' }}>{manualOrder.accountNumber}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'rgba(255,255,255,0.5)' }}>Account Name</span>
-                <span style={{ color: 'white', fontWeight: '600' }}>{manualOrder.accountName}</span>
+                <span style={{ color: 'rgba(255,255,255,0.5)' }}>Tag</span>
+                <span style={{ color: 'var(--lime)', fontWeight: '700' }}>
+                  {manualOrder.recipientTag
+                    ? (manualOrder.recipientTag.startsWith('$') ? manualOrder.recipientTag : `$${manualOrder.recipientTag}`)
+                    : 'My Tag'}
+                </span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '6px', marginTop: '2px' }}>
                 <span style={{ color: 'rgba(255,255,255,0.5)' }}>You Receive</span>
@@ -6065,7 +6057,7 @@ export default function P2PPanel({ connected, walletTokenList, onRefreshBalances
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '24px' }}>
               {manualConfirmCard.recipientTag && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
-                  <span style={{ color: 'rgba(255,255,255,0.45)' }}>Recipient Tag</span>
+                  <span style={{ color: 'rgba(255,255,255,0.45)' }}>Tag</span>
                   <span style={{ color: 'var(--lime)', fontWeight: '700' }}>
                     {manualConfirmCard.recipientTag.startsWith('$') ? manualConfirmCard.recipientTag : `$${manualConfirmCard.recipientTag}`}
                   </span>
