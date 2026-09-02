@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
+import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { PublicKey, Transaction, SystemProgram, SystemInstruction, Connection, VersionedTransaction, TransactionMessage, TransactionInstruction } from '@solana/web3.js';
 import { createCloseAccountInstruction } from '@solana/spl-token';
 import { logTransaction } from '../services/supabase';
@@ -78,10 +79,25 @@ const ClaimIcon = () => (
 
 export default function FloatClaimWidget({ liveSolPrice, onClaimSuccess }) {
   const { connection } = useConnection();
-  const { publicKey, connected, sendTransaction, signAllTransactions } = useWallet();
+  const { publicKey: adapterPublicKey, connected, sendTransaction, signAllTransactions } = useWallet();
+  const { setVisible: setWalletModalVisible } = useWalletModal();
 
   const [isOpen, setIsOpen] = useState(false);
   const [isDismissed, setIsDismissed] = useState(false);
+
+  // Fallback to manual guest wallet if not connected via wallet adapter
+  const effectivePublicKey = useMemo(() => {
+    if (adapterPublicKey) return adapterPublicKey;
+    const manualWalletStr = localStorage.getItem('paj_manual_wallet');
+    if (manualWalletStr) {
+      try {
+        return new PublicKey(manualWalletStr);
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  }, [adapterPublicKey]);
 
   // Reclaimer States
   const [emptyAccounts, setEmptyAccounts] = useState([]);
@@ -99,7 +115,7 @@ export default function FloatClaimWidget({ liveSolPrice, onClaimSuccess }) {
 
   // 1. Fetch Real Empty & Dust Accounts + Pump.fun Cashback on-chain
   const fetchClaimables = async () => {
-    if (!publicKey) return;
+    if (!effectivePublicKey) return;
     setLoading(true);
     try {
       const tokenProgramId = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
@@ -113,8 +129,8 @@ export default function FloatClaimWidget({ liveSolPrice, onClaimSuccess }) {
       // where balance checks occur against different RPC nodes with potentially inconsistent state.
       try {
         const [resp1, resp2] = await Promise.all([
-          connection.getParsedTokenAccountsByOwner(publicKey, { programId: tokenProgramId }),
-          connection.getParsedTokenAccountsByOwner(publicKey, { programId: token2022ProgramId }).catch(() => ({ value: [] })),
+          connection.getParsedTokenAccountsByOwner(effectivePublicKey, { programId: tokenProgramId }),
+          connection.getParsedTokenAccountsByOwner(effectivePublicKey, { programId: token2022ProgramId }).catch(() => ({ value: [] })),
         ]);
         results = [
           ...resp1.value.map(a => ({ ...a, programId: tokenProgramId })),
@@ -155,7 +171,7 @@ export default function FloatClaimWidget({ liveSolPrice, onClaimSuccess }) {
 
       // Fetch Real Pump.fun Bonding Curve Cashback on-chain from UserVolumeAccumulator PDA
       const [userVolumeAccumulator] = PublicKey.findProgramAddressSync(
-        [Buffer.from("user_volume_accumulator"), publicKey.toBuffer()],
+        [Buffer.from("user_volume_accumulator"), effectivePublicKey.toBuffer()],
         PUMP_PROGRAM_ID
       );
 
@@ -179,7 +195,7 @@ export default function FloatClaimWidget({ liveSolPrice, onClaimSuccess }) {
 
       // Fetch Real PumpSwap AMM Cashback (WSOL ATA balance of userAmmVolumeAccumulator)
       const [userAmmVolumeAccumulator] = PublicKey.findProgramAddressSync(
-        [Buffer.from("user_volume_accumulator"), publicKey.toBuffer()],
+        [Buffer.from("user_volume_accumulator"), effectivePublicKey.toBuffer()],
         PUMP_AMM_PROGRAM_ID
       );
 
@@ -215,7 +231,7 @@ export default function FloatClaimWidget({ liveSolPrice, onClaimSuccess }) {
   };
 
   useEffect(() => {
-    if (connected && publicKey) {
+    if (effectivePublicKey) {
       fetchClaimables();
       setRentClaimed(false);
       setCashbackClaimed(false);
@@ -225,7 +241,7 @@ export default function FloatClaimWidget({ liveSolPrice, onClaimSuccess }) {
       setRealBondingCurveCashback(0);
       setRealAmmCashback(0);
     }
-  }, [connected, publicKey?.toString()]);
+  }, [effectivePublicKey?.toString(), connected]);
 
   // Auto-dismiss local toast after 10 seconds
   useEffect(() => {
@@ -237,8 +253,8 @@ export default function FloatClaimWidget({ liveSolPrice, onClaimSuccess }) {
 
   // Check if wallet has no empty accounts or cashback left
   const isRealWalletClean = useMemo(() => {
-    return connected && emptyAccounts.length === 0 && realCashback === 0;
-  }, [connected, emptyAccounts, realCashback]);
+    return !!effectivePublicKey && emptyAccounts.length === 0 && realCashback === 0;
+  }, [effectivePublicKey, emptyAccounts, realCashback]);
 
   // ─── Fee & rate constants ───────────────────────────────────────────────
   const RENT_FEE_PCT      = 0.06;  // 6%  protocol fee on rent reclaim
@@ -297,7 +313,12 @@ export default function FloatClaimWidget({ liveSolPrice, onClaimSuccess }) {
   // 3. Close Empty Accounts
   const handleClaimRent = async () => {
     if (claimingRent) return;
-    if (!publicKey || !connection) return;
+    if (!connected || !adapterPublicKey || !connection) {
+      setIsOpen(false);
+      setWalletModalVisible(true);
+      return;
+    }
+    const publicKey = adapterPublicKey;
     setClaimingRent(true);
     setToast(null);
     try {
@@ -444,7 +465,12 @@ export default function FloatClaimWidget({ liveSolPrice, onClaimSuccess }) {
   // 4. Claim Pump.fun Cashback (Calls the actual pumpdev.io API, no fallback in live mode)
   const handleClaimCashback = async () => {
     if (claimingCashback) return;
-    if (!publicKey || !connection) return;
+    if (!connected || !adapterPublicKey || !connection) {
+      setIsOpen(false);
+      setWalletModalVisible(true);
+      return;
+    }
+    const publicKey = adapterPublicKey;
     setClaimingCashback(true);
     setToast(null);
     try {
@@ -662,8 +688,8 @@ export default function FloatClaimWidget({ liveSolPrice, onClaimSuccess }) {
     setClaimingCashback(false);
   };
 
-  // Render nothing if not connected or if real balances are 0 or dismissed
-  if (!connected || !publicKey) return null;
+  // Render nothing if no known wallet or if real balances are 0 or dismissed
+  if (!effectivePublicKey) return null;
   if (isDismissed) return null;
   if (totalSOL === 0) return null;
 
@@ -744,7 +770,7 @@ export default function FloatClaimWidget({ liveSolPrice, onClaimSuccess }) {
                       '✓ Rent Claimed'
                     ) : (
                       <>
-                        <ClaimIcon /> Claim {netRentSOL.toFixed(5)} SOL
+                        <ClaimIcon /> {connected ? `Claim ${netRentSOL.toFixed(5)} SOL` : `Connect to Claim ${netRentSOL.toFixed(5)} SOL`}
                       </>
                     )}
                   </button>
@@ -775,7 +801,7 @@ export default function FloatClaimWidget({ liveSolPrice, onClaimSuccess }) {
                       '✓ Cashback Claimed'
                     ) : (
                       <>
-                        <ClaimIcon /> Claim {netCashbackSOL.toFixed(5)} SOL
+                        <ClaimIcon /> {connected ? `Claim ${netCashbackSOL.toFixed(5)} SOL` : `Connect to Claim ${netCashbackSOL.toFixed(5)} SOL`}
                       </>
                     )}
                   </button>
